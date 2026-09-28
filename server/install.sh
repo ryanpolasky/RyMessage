@@ -140,7 +140,7 @@ sign_binary() {
   security lock-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
   return $result
 }
-signed_by_us() { codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; }
+signed_by_us() { codesign -dvv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; }
 
 BUILT_HASH="$(LC_ALL=C shasum -a 256 "$BUILT" | awk '{ print $1 }')"
 if [[ -f "$BINARY" && "$(cat "$INSTALL_DIR/.build-hash" 2>/dev/null || true)" == "$BUILT_HASH" ]] &&
@@ -157,19 +157,6 @@ else
   if [[ -f "$SIGNING_KEYCHAIN" ]]; then
     note "Enter the signing keychain password to sign the new server."
     sign_binary || true
-  fi
-  CERT_PEM="$INSTALL_DIR/signing-certificate.pem"
-  if ! signed_by_us && [[ -f "$SIGNING_KEYCHAIN" ]] &&
-    security find-certificate -c "$SIGNING_IDENTITY" -p "$SIGNING_KEYCHAIN" >"$CERT_PEM" 2>/dev/null; then
-    note "codesign wants the certificate trusted for code signing. macOS asks for your password once."
-    if security add-trusted-cert -p codeSign -k "$SIGNING_KEYCHAIN" "$CERT_PEM" >>"$SIGN_LOG" 2>&1; then
-      note "Trusted. Enter the signing keychain password again to sign."
-      sign_binary || true
-    else
-      note "Trusting needs the Mac's own screen, which an SSH session can't show. Once, in Terminal through"
-      note "Screen Sharing, run this and then ./install.sh again:"
-      note "  security add-trusted-cert -p codeSign -k \"$SIGNING_KEYCHAIN\" \"$CERT_PEM\""
-    fi
   fi
   if signed_by_us; then
     note "Signed with your local certificate, so macOS keeps its permissions."
