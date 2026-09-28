@@ -54,7 +54,9 @@ BUILT="$(swift build -c release --show-bin-path)/RyMessageServer"
 step "Installing"
 mkdir -p "$INSTALL_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-cp -f "$BUILT" "$BINARY"
+# overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
+rm -f "$BINARY"
+cp "$BUILT" "$BINARY"
 "$BINARY" --pairing-code >/dev/null
 note "$BINARY"
 
