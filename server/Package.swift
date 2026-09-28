@@ -5,7 +5,7 @@ let package = Package(
     name: "RyMessageServer",
     platforms: [.macOS(.v13)],
     dependencies: [
-        .package(url: "https://github.com/vapor/vapor.git", exact: "4.122.2")
+        .package(url: "https://github.com/vapor/vapor.git", exact: "4.117.2")
     ],
     targets: [
         .executableTarget(
