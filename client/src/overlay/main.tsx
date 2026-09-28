@@ -1,0 +1,50 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { MockBridge } from "../api/mockBridge";
+import type { Conversation } from "../api/types";
+import type { OverlayNotice } from "../desktop";
+import { fitOverlayWindow, isDesktop, onOverlayNotice, requestOpenConversation } from "../desktop";
+import { OVERLAY_WIDTH, Overlay } from "./Overlay";
+import "../styles.css";
+import "./overlay.css";
+
+function previewNotices(handler: (notice: OverlayNotice) => void): () => void {
+  const bridge = new MockBridge([2500, 4500]);
+  let conversations: Conversation[] = [];
+  bridge.getConversations().then((list) => (conversations = list));
+  const off = bridge.subscribe((event) => {
+    if (event.type === "conversationUpdated") {
+      conversations = conversations.map((c) => (c.id === event.conversation.id ? event.conversation : c));
+      return;
+    }
+    if (event.type !== "messageCreated" || event.message.isFromMe) return;
+    const conversation = conversations.find((c) => c.id === event.message.conversationId);
+    if (conversation) handler({ conversation, message: event.message });
+  });
+  return () => {
+    off();
+    bridge.close();
+  };
+}
+
+document.documentElement.classList.add(isDesktop ? "overlay-desktop" : "overlay-preview");
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    {isDesktop ? (
+      <Overlay
+        subscribe={onOverlayNotice}
+        onOpen={(id) => {
+          requestOpenConversation(id).catch((e) => console.warn("Failed to open conversation", e));
+        }}
+        onResize={(height) => {
+          fitOverlayWindow(OVERLAY_WIDTH, height).catch((e) =>
+            console.warn("Failed to resize overlay", e)
+          );
+        }}
+      />
+    ) : (
+      <Overlay subscribe={previewNotices} onOpen={() => {}} onResize={() => {}} />
+    )}
+  </StrictMode>
+);

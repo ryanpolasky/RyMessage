@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+AGENTS.md
+
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+
+# Tauri
+client/src-tauri/target/

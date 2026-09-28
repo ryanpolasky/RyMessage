@@ -1,0 +1,130 @@
+:root {
+  --overlay-bubble: #e9e9eb;
+  --overlay-bubble-text: #000000;
+  --overlay-label-bg: rgba(255, 255, 255, 0.88);
+  --overlay-label-text: #1d1d1f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --overlay-bubble: #3a3a3c;
+    --overlay-bubble-text: #ffffff;
+    --overlay-label-bg: rgba(44, 44, 46, 0.9);
+    --overlay-label-text: #f5f5f7;
+  }
+}
+
+html.overlay-desktop,
+html.overlay-desktop body {
+  background: transparent;
+}
+
+html.overlay-preview body {
+  background:
+    radial-gradient(ellipse at 20% 10%, #4f7cff 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 90%, #c05cff 0%, transparent 50%),
+    linear-gradient(160deg, #1b2a6b, #3b1c63);
+}
+
+.overlay-root {
+  width: 412px;
+  padding: 10px 14px 14px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.overlay-card {
+  position: relative;
+  cursor: default;
+  touch-action: none;
+  transform-origin: top left;
+  animation: overlay-in 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.overlay-card.leaving {
+  animation: overlay-out 0.22s ease-in forwards;
+}
+
+.overlay-card.leaving.swiped {
+  animation: none;
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: translateX(-28px) scale(0.92);
+  }
+}
+
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+    transform: translateX(-28px) scale(0.96);
+  }
+}
+
+.overlay-label {
+  display: inline-block;
+  max-width: calc(100% - 40px);
+  margin: 0 0 4px 40px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: var(--overlay-label-bg);
+  color: var(--overlay-label-text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overlay-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.overlay-avatar {
+  flex: 0 0 30px;
+}
+
+.overlay-bubbles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.overlay-bubble {
+  position: relative;
+  max-width: 100%;
+  padding: 7px 12px;
+  border-radius: 17px;
+  background: var(--overlay-bubble);
+  color: var(--overlay-bubble-text);
+  font-size: 13.5px;
+  line-height: 1.35;
+  transition: transform 0.12s ease;
+}
+
+.overlay-card:hover .overlay-bubble {
+  transform: translateX(2px);
+}
+
+.overlay-bubble-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.overlay-tail {
+  position: absolute;
+  left: -5px;
+  bottom: 0;
+  fill: var(--overlay-bubble);
+}
