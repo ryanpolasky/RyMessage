@@ -114,10 +114,11 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
         return response
     }
 
-    app.grouped("v1").webSocket("events") { req, socket in
+    // websocket-kit traps if a socket is configured off its event loop, so this must stay the synchronous overload
+    let onUpgrade: @Sendable (Request, WebSocket) -> Void = { req, socket in
         socket.pingInterval = .seconds(25)
         if req.headers.bearerAuthorization?.token == token {
-            await hub.add(socket)
+            Task { await hub.add(socket) }
             return
         }
         let state = SocketAuthState()
@@ -142,6 +143,7 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
             Task { await hub.add(socket) }
         }
     }
+    app.grouped("v1").webSocket("events", onUpgrade: onUpgrade)
 }
 
 private struct SocketAuth: Decodable {

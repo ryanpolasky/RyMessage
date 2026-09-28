@@ -21,7 +21,7 @@ actor EventHub {
         guard let data = try? encoder.encode(event),
               let text = String(data: data, encoding: .utf8) else { return }
         for socket in clients.values {
-            socket.send(text)
+            socket.eventLoop.execute { socket.send(text) }
         }
     }
 
