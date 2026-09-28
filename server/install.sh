@@ -82,6 +82,10 @@ if [[ -z "$(config_value advertisedURL)" ]]; then
     fi
   done
   TAILSCALE_IP="$([[ -n "$TAILSCALE" ]] && "$TAILSCALE" ip -4 2>/dev/null | head -n 1 || true)"
+  # the App Store build of Tailscale has no CLI on the PATH, so fall back to its 100.64.0.0/10 interface address
+  if [[ -z "$TAILSCALE_IP" ]]; then
+    TAILSCALE_IP="$(ifconfig 2>/dev/null | awk '$1 == "inet" && $2 ~ /^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./ { print $2; exit }')"
+  fi
   if [[ -n "$TAILSCALE_IP" ]]; then
     answer=""
     read -r -p "    Use your Tailscale address ($TAILSCALE_IP) in the pairing code? [Y/n] " answer || true
