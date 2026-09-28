@@ -69,7 +69,7 @@ SIGNING_IDENTITY="RyMessage Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 has_signing_identity() { security find-identity -p codesigning 2>/dev/null | grep -q "\"$SIGNING_IDENTITY\""; }
 # codesign only accepts a self-made certificate once it's trusted for code signing
-trust_certificate() { security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$1" >/dev/null 2>&1; }
+trust_certificate() { security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$1"; }
 create_signing_identity() {
   local dir result
   dir="$(mktemp -d)"
@@ -85,16 +85,21 @@ basicConstraints = critical, CA:false
 keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 CONF
-  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "$dir/cert.conf" \
-      -keyout "$dir/key.pem" -out "$dir/cert.pem" >/dev/null 2>&1 &&
+  { echo "step: create certificate" &&
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "$dir/cert.conf" \
+      -keyout "$dir/key.pem" -out "$dir/cert.pem" &&
+    echo "step: package certificate" &&
     /usr/bin/openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" -name "$SIGNING_IDENTITY" \
-      -out "$dir/identity.p12" -passout pass:rymessage >/dev/null 2>&1 &&
-    security import "$dir/identity.p12" -k "$KEYCHAIN" -P rymessage -T /usr/bin/codesign >/dev/null 2>&1 &&
-    trust_certificate "$dir/cert.pem"
+      -out "$dir/identity.p12" -passout pass:rymessage &&
+    echo "step: import into login keychain" &&
+    security import "$dir/identity.p12" -k "$KEYCHAIN" -P rymessage -T /usr/bin/codesign &&
+    echo "step: trust for code signing" &&
+    trust_certificate "$dir/cert.pem"; } >>"$CREATE_LOG" 2>&1
   result=$?
   rm -rf "$dir"
   return $result
 }
+CREATE_LOG="$(mktemp)"
 SIGN_LOG="$(mktemp)"
 sign_binary() {
   codesign --force --sign "$SIGNING_IDENTITY" --identifier app.rymessage.server "$BINARY" >"$SIGN_LOG" 2>&1
@@ -108,16 +113,20 @@ fi
 if ! sign_binary && has_signing_identity; then
   note "Trusting the local signing certificate. macOS will ask for your password."
   security find-certificate -c "$SIGNING_IDENTITY" -p "$KEYCHAIN" > "$SIGN_LOG.pem" 2>/dev/null &&
-    trust_certificate "$SIGN_LOG.pem" || true
+    trust_certificate "$SIGN_LOG.pem" >>"$CREATE_LOG" 2>&1 || true
   sign_binary || true
 fi
 if codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; then
   note "Signed with your local certificate."
 else
   note "Couldn't sign with a local certificate, so macOS will ask for permissions again after updates."
+  if [[ -s "$CREATE_LOG" ]]; then
+    note "Setting up the certificate stopped at:"
+    grep -v '^\s*$' "$CREATE_LOG" | tail -n 4 | sed 's/^/      /'
+  fi
   note "codesign said: $(tail -n 1 "$SIGN_LOG")"
 fi
-rm -f "$SIGN_LOG" "$SIGN_LOG.pem"
+rm -f "$SIGN_LOG" "$SIGN_LOG.pem" "$CREATE_LOG"
 "$BINARY" --pairing-code >/dev/null
 
 port_in_use() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
@@ -135,7 +144,8 @@ if port_in_use "$PORT"; then
   "$BINARY" --set-port "$FREE" | sed 's/^/    /'
 fi
 
-if [[ -z "$(config_value advertisedURL)" ]]; then
+CURRENT_URL="$(config_value advertisedURL)"
+if [[ -z "$CURRENT_URL" || "$CURRENT_URL" =~ ^http://100\. ]]; then
   TAILSCALE=""
   for candidate in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
     if command -v "$candidate" >/dev/null 2>&1; then
@@ -148,11 +158,17 @@ if [[ -z "$(config_value advertisedURL)" ]]; then
   if [[ -z "$TAILSCALE_IP" ]]; then
     TAILSCALE_IP="$(ifconfig 2>/dev/null | awk '$1 == "inet" && $2 ~ /^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./ { print $2; exit }')"
   fi
+  # a MagicDNS name keeps working even if the Mac is ever re-added to the tailnet with a new address
+  TAILSCALE_NAME=""
   if [[ -n "$TAILSCALE_IP" ]]; then
+    TAILSCALE_NAME="$(dig +short +time=2 +tries=1 -x "$TAILSCALE_IP" @100.100.100.100 2>/dev/null | head -n 1 | sed 's/\.$//' || true)"
+  fi
+  TAILSCALE_URL="http://${TAILSCALE_NAME:-$TAILSCALE_IP}:$(config_value port)"
+  if [[ -n "$TAILSCALE_IP" && "$CURRENT_URL" != "$TAILSCALE_URL" ]]; then
     answer=""
-    read -r -p "    Use your Tailscale address ($TAILSCALE_IP) in the pairing code? [Y/n] " answer || true
+    read -r -p "    Use your Tailscale address (${TAILSCALE_NAME:-$TAILSCALE_IP}) in the pairing code? [Y/n] " answer || true
     if [[ ! "$answer" =~ ^[Nn] ]]; then
-      "$BINARY" --set-advertised-url "http://$TAILSCALE_IP:$(config_value port)" | sed 's/^/    /'
+      "$BINARY" --set-advertised-url "$TAILSCALE_URL" | sed 's/^/    /'
     fi
   fi
 fi
