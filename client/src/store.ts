@@ -99,6 +99,12 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     );
   }, [bridge]);
 
+  useEffect(() => {
+    if (!loadError) return;
+    const retry = window.setInterval(loadConversations, 15_000);
+    return () => clearInterval(retry);
+  }, [loadError, loadConversations]);
+
   const loadMessages = useCallback(
     (id: string) => {
       setMessageErrors((cur) => withoutKey(cur, id));
