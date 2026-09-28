@@ -121,14 +121,14 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
             Task { await hub.add(socket) }
             return
         }
-        let state = SocketAuthState()
+        let authenticated = NIOLoopBoundBox(false, eventLoop: req.eventLoop)
         let timeout = req.eventLoop.scheduleTask(in: .seconds(10)) {
-            if !state.authenticated {
+            if !authenticated.value {
                 _ = socket.close(code: .policyViolation)
             }
         }
         socket.onText { socket, text in
-            if state.authenticated { return }
+            if authenticated.value { return }
             guard let data = text.data(using: .utf8),
                   let auth = try? JSONDecoder().decode(SocketAuth.self, from: data),
                   auth.type == "auth",
@@ -138,7 +138,7 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
                 _ = socket.close(code: .policyViolation)
                 return
             }
-            state.authenticated = true
+            authenticated.value = true
             timeout.cancel()
             Task { await hub.add(socket) }
         }
@@ -149,10 +149,6 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
 private struct SocketAuth: Decodable {
     let type: String
     let token: String
-}
-
-private final class SocketAuthState {
-    var authenticated = false
 }
 
 extension HTTPMediaType {
