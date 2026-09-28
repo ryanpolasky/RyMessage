@@ -5,6 +5,7 @@ LABEL="app.rymessage.server"
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
 rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 rm -rf "$HOME/Library/Application Support/RyMessage" "$HOME/Library/Caches/RyMessage"
+security delete-keychain "$HOME/Library/Keychains/rymessage-signing.keychain-db" >/dev/null 2>&1 || true
 
 echo "RyMessage Server is stopped and removed."
 echo "Your pairing token is kept in ~/.rymessage. Delete that folder to unpair every device."

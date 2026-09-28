@@ -26,7 +26,7 @@ The script:
 
 Everything can be done over Screen Sharing.
 
-**Updating:** `git pull`, then `./install.sh` again. The script signs the server with a local certificate it creates in your login keychain ("RyMessage Local Signing"), so macOS keeps Full Disk Access and Automation across updates. If signing ever fails, the script asks for the permissions again.
+**Updating:** `git pull`, then `./install.sh` again. If the server code didn't change, the installed server is left alone. Otherwise the script signs the new build with a local certificate ("RyMessage Local Signing") so macOS keeps Full Disk Access and Automation. The certificate lives in its own keychain, `~/Library/Keychains/rymessage-signing.keychain-db`, protected by a password you choose on first install and type during updates. It stays locked the rest of the time so no other app can use it to impersonate the server. Everything happens in Terminal, so it works over SSH too.
 
 **Removing:** `./uninstall.sh`.
 

@@ -59,19 +59,23 @@ for _ in $(seq 1 30); do
   launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
   sleep 0.5
 done
-# overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
-rm -f "$BINARY"
-cp "$BUILT" "$BINARY"
 note "$BINARY"
 
-# macOS ties permissions to the signature; a fixed local certificate keeps them across rebuilds
+# permissions follow the signature, so a fixed certificate in its own locked keychain keeps them without letting other apps impersonate the server
 SIGNING_IDENTITY="RyMessage Local Signing"
-KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-has_signing_identity() { security find-identity -p codesigning 2>/dev/null | grep -q "\"$SIGNING_IDENTITY\""; }
-# codesign only accepts a self-made certificate once it's trusted for code signing
-trust_certificate() { security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$1"; }
-create_signing_identity() {
-  local dir result
+SIGNING_KEYCHAIN="$HOME/Library/Keychains/rymessage-signing.keychain-db"
+SIGN_LOG="$(mktemp)"
+create_signing_keychain() {
+  local dir password confirm result
+  note "Choose a password for RyMessage's signing keychain. You'll type it when an update changes the server."
+  while true; do
+    read -r -s -p "    New password: " password
+    echo
+    read -r -s -p "    Again: " confirm
+    echo
+    [[ -n "$password" && "$password" == "$confirm" ]] && break
+    note "Those didn't match (or were empty). Try again."
+  done
   dir="$(mktemp -d)"
   cat > "$dir/cert.conf" <<CONF
 [req]
@@ -91,42 +95,64 @@ CONF
     echo "step: package certificate" &&
     /usr/bin/openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" -name "$SIGNING_IDENTITY" \
       -out "$dir/identity.p12" -passout pass:rymessage &&
-    echo "step: import into login keychain" &&
-    security import "$dir/identity.p12" -k "$KEYCHAIN" -P rymessage -T /usr/bin/codesign &&
-    echo "step: trust for code signing" &&
-    trust_certificate "$dir/cert.pem"; } >>"$CREATE_LOG" 2>&1
+    echo "step: create keychain" &&
+    security create-keychain -p "$password" "$SIGNING_KEYCHAIN" &&
+    security set-keychain-settings -lut 300 "$SIGNING_KEYCHAIN" &&
+    echo "step: import certificate" &&
+    security import "$dir/identity.p12" -k "$SIGNING_KEYCHAIN" -P rymessage -T /usr/bin/codesign &&
+    echo "step: allow codesign" &&
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$SIGNING_KEYCHAIN"; } >"$SIGN_LOG" 2>&1
   result=$?
   rm -rf "$dir"
+  if [[ $result != 0 ]]; then
+    security delete-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+  fi
   return $result
 }
-CREATE_LOG="$(mktemp)"
-SIGN_LOG="$(mktemp)"
 sign_binary() {
-  codesign --force --sign "$SIGNING_IDENTITY" --identifier app.rymessage.server "$BINARY" >"$SIGN_LOG" 2>&1
-}
-if ! has_signing_identity; then
-  security delete-certificate -c "$SIGNING_IDENTITY" "$KEYCHAIN" >/dev/null 2>&1 || true
-  note "Creating a local signing certificate so permissions survive future updates."
-  note "macOS will ask for your password to trust it. If it asks to let codesign use it, click Always Allow."
-  create_signing_identity || true
-fi
-if ! sign_binary && has_signing_identity; then
-  note "Trusting the local signing certificate. macOS will ask for your password."
-  security find-certificate -c "$SIGNING_IDENTITY" -p "$KEYCHAIN" > "$SIGN_LOG.pem" 2>/dev/null &&
-    trust_certificate "$SIGN_LOG.pem" >>"$CREATE_LOG" 2>&1 || true
-  sign_binary || true
-fi
-if codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; then
-  note "Signed with your local certificate."
-else
-  note "Couldn't sign with a local certificate, so macOS will ask for permissions again after updates."
-  if [[ -s "$CREATE_LOG" ]]; then
-    note "Setting up the certificate stopped at:"
-    grep -v '^\s*$' "$CREATE_LOG" | tail -n 4 | sed 's/^/      /'
+  local unlocked="" result
+  for _ in 1 2 3; do
+    if security unlock-keychain "$SIGNING_KEYCHAIN"; then
+      unlocked="yes"
+      break
+    fi
+    note "That password didn't unlock it. Try again."
+  done
+  if [[ -z "$unlocked" ]]; then
+    echo "step: unlock keychain (password not accepted)" >>"$SIGN_LOG"
+    return 1
   fi
-  note "codesign said: $(tail -n 1 "$SIGN_LOG")"
+  { echo "step: sign" &&
+    codesign --force --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" \
+      --identifier app.rymessage.server "$BINARY"; } >>"$SIGN_LOG" 2>&1
+  result=$?
+  security lock-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+  return $result
+}
+
+BUILT_HASH="$(shasum -a 256 "$BUILT" | awk '{ print $1 }')"
+if [[ -f "$BINARY" && "$(cat "$INSTALL_DIR/.build-hash" 2>/dev/null || true)" == "$BUILT_HASH" ]]; then
+  note "The server hasn't changed since the last install, so it's kept as is."
+else
+  # overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
+  rm -f "$BINARY"
+  cp "$BUILT" "$BINARY"
+  echo "$BUILT_HASH" > "$INSTALL_DIR/.build-hash"
+  if [[ ! -f "$SIGNING_KEYCHAIN" ]]; then
+    create_signing_keychain || true
+  fi
+  if [[ -f "$SIGNING_KEYCHAIN" ]]; then
+    note "Enter the signing keychain password to sign the new server."
+    sign_binary || true
+  fi
+  if codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; then
+    note "Signed with your local certificate, so macOS keeps its permissions."
+  else
+    note "Couldn't sign with the local certificate, so macOS may ask for permissions again. It stopped at:"
+    grep -v '^\s*$' "$SIGN_LOG" | tail -n 3 | sed 's/^/      /'
+  fi
 fi
-rm -f "$SIGN_LOG" "$SIGN_LOG.pem" "$CREATE_LOG"
+rm -f "$SIGN_LOG"
 "$BINARY" --pairing-code >/dev/null
 
 port_in_use() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
