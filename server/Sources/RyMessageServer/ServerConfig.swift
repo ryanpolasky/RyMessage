@@ -31,12 +31,17 @@ enum ConfigStore {
             advertisedURL: nil,
             allowedOrigins: nil
         )
+        try save(config)
+        return config
+    }
+
+    static func save(_ config: ServerConfig) throws {
+        let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(config).write(to: file, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        return config
     }
 
     private static func randomToken() -> String {

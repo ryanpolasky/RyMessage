@@ -2,17 +2,57 @@
 
 The macOS companion server. Normalizes Messages.app data into the RyMessage API defined in `../docs/api.md` and pushes real-time events to connected clients.
 
-Builds and runs on macOS only.
+Runs natively on macOS 13 or later. It can't run in Docker: it needs your Mac's Messages database, Messages.app, and macOS privacy permissions, none of which reach inside a container.
 
-## Running
+## Install
+
+On the Mac, logged in as the account that uses Messages:
+
+```
+git clone https://github.com/ryanpolasky/RyMessage.git
+cd RyMessage/server
+./install.sh
+```
+
+The script:
+
+1. Installs Apple's command line tools if they're missing, then builds the server.
+2. Installs it to `~/Library/Application Support/RyMessage/` and registers a LaunchAgent, so it starts whenever you log in and restarts itself if it ever quits.
+3. Offers to put your Tailscale address in the pairing code, if Tailscale is installed.
+4. Walks you through the one-time **Full Disk Access** permission. It opens the right System Settings page and a Finder window with the server selected, so you just drag it in.
+5. Watches for the one-time **Automation** prompt ("rymessage-server wants to control Messages"). Click OK.
+6. Checks what could stop it after a reboot: FileVault, automatic login, and sleep.
+7. Prints the pairing code to paste into RyMessage on Windows.
+
+Everything can be done over Screen Sharing.
+
+**Updating:** `git pull`, then `./install.sh` again. A rebuilt server is a new binary to macOS, so if the script asks for Full Disk Access again, remove the old entry with the minus button and add it back.
+
+**Removing:** `./uninstall.sh`.
+
+**Logs:** `~/Library/Logs/RyMessage/server.log`.
+
+**Print the pairing code again:** `~/Library/Application\ Support/RyMessage/rymessage-server --pairing-code`
+
+**Restart:** `launchctl kickstart -k gui/$(id -u)/app.rymessage.server`
+
+## Staying up after reboots
+
+The server runs inside your login session, because Messages.app does. After a restart it comes back as soon as the account logs in:
+
+* **Automatic login** (System Settings > Users & Groups) brings it back by itself after a restart or power cut. It isn't available while FileVault is on.
+* **With FileVault on,** the Mac waits at the unlock screen after a restart. For planned restarts, `sudo fdesetup authrestart` skips that prompt once.
+* **Sleep** takes it offline. `sudo pmset -a sleep 0` keeps the Mac awake.
+
+## Development
 
 ```
 swift run
 ```
 
-On first run the server generates a random token, stores it in `~/.rymessage/config.json` (permissions 600), and prints a pairing code. Paste the pairing code into the RyMessage app on Windows to connect.
+A server started from Terminal borrows Terminal's permissions, so Terminal needs Full Disk Access for it to read messages.
 
-Every endpoint requires the token as a bearer token. `RYMESSAGE_TOKEN` overrides the stored token if set.
+On first run the server generates a random token, stores it in `~/.rymessage/config.json` (permissions 600), and prints a pairing code. Every endpoint requires the token as a bearer token. `RYMESSAGE_TOKEN` overrides the stored token if set.
 
 ## Configuration
 
@@ -34,13 +74,11 @@ Browsers block calls from an https page to a plain-http server, so hosted client
 tailscale serve --bg 8787
 ```
 
-That proxies `https://<mac-name>.<tailnet>.ts.net` to the server with valid certificates, reachable only from your tailnet. Then set:
+That proxies `https://<mac-name>.<tailnet>.ts.net` to the server with valid certificates, reachable only from your tailnet. Then point pairing codes at it:
 
-```json
-{ "advertisedURL": "https://<mac-name>.<tailnet>.ts.net" }
 ```
-
-and restart so pairing codes hand out the https address.
+~/Library/Application\ Support/RyMessage/rymessage-server --set-advertised-url https://<mac-name>.<tailnet>.ts.net
+```
 
 ## HTTPS via Cloudflare Tunnel
 
@@ -69,17 +107,17 @@ If cloudflared runs in Docker on the Mac itself, use `http://host.docker.interna
 
 `RYM1.` followed by base64url JSON: `{"t":"<token>","u":"<server url>"}`.
 
-## Status
+## What works
 
-The HTTP and WebSocket surface is in place. All capabilities currently report `false` and their endpoints return `501 not_supported` until the chat.db reader and Messages.app send path are implemented.
+| Feature | How |
+| --- | --- |
+| Conversations, messages, received tapbacks and replies | Read from `~/Library/Messages/chat.db` |
+| Live updates | chat.db is checked every second for new messages, tapbacks, and delivery or read changes |
+| Photos and files | Served from `~/Library/Messages/Attachments`. HEIC photos are converted to JPEG and cached in `~/Library/Caches/RyMessage` |
+| Sending text and files, starting one-on-one chats | AppleScript automation of Messages.app. Files are staged in `~/Pictures/RyMessage` first, because Messages only picks up files from your home folders |
+| Contact names and photos | Read from the Contacts database, which Full Disk Access already covers |
 
-Planned implementation order:
-
-1. Read conversations and messages from `~/Library/Messages/chat.db` (requires Full Disk Access).
-2. Poll or watch chat.db for new messages and broadcast events.
-3. Send text via AppleScript automation of Messages.app.
-4. Serve attachments from `~/Library/Messages/Attachments`.
-5. Send attachments.
+Sending tapbacks and replies, typing indicators, marking read on the Mac, and starting new group chats all need Apple's private API. The server reports them as unsupported, so the client hides them.
 
 ## Security
 

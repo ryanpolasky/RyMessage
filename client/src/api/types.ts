@@ -7,6 +7,21 @@ export interface Capabilities {
   unsend: boolean;
   typingIndicators: boolean;
   markRead: boolean;
+  compose: boolean;
+  groupCompose: boolean;
+  contacts: boolean;
+}
+
+export interface Contact {
+  id: string;
+  displayName: string;
+  handles: string[];
+  avatarUrl: string | null;
+}
+
+export interface ContactsResponse {
+  version: string;
+  contacts: Contact[] | null;
 }
 
 export type Service = "iMessage" | "SMS";
@@ -70,4 +85,5 @@ export interface Conversation {
 export type BridgeEvent =
   | { type: "messageCreated"; message: Message }
   | { type: "messageUpdated"; message: Message }
-  | { type: "conversationUpdated"; conversation: Conversation };
+  | { type: "conversationUpdated"; conversation: Conversation }
+  | { type: "contactsChanged"; version: string };

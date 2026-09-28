@@ -10,7 +10,7 @@ A Windows iMessage client backed by a companion server running on macOS. The Mac
 
 ## Setup
 
-1. On the Mac, run the RyMessage server. On first run it generates a token in `~/.rymessage/config.json` and prints a pairing code.
+1. On the Mac, run `server/install.sh`. It builds the server, sets it to start at login, walks you through the two macOS permissions, and prints a pairing code. See `server/README.md`.
 2. On Windows, open RyMessage and paste the pairing code. That's it.
 
 Prefer a private network between the two machines, such as Tailscale. If the server advertises the wrong address for pairing, set `advertisedHost` in `~/.rymessage/config.json`.

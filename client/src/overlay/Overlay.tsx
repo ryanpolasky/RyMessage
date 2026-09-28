@@ -3,9 +3,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Conversation, Message } from "../api/types";
 import { Avatar } from "../components/Avatar";
 import type { OverlayNotice } from "../desktop";
+import { copyText } from "../desktop";
+import { findVerificationCode, formatVerificationCode } from "../utils/verificationCode";
 
 export const OVERLAY_WIDTH = 412;
-const CARD_TTL_MS = 7000;
 const LEAVE_MS = 300;
 const MAX_CARDS = 4;
 const MAX_BUBBLES = 3;
@@ -17,6 +18,7 @@ const WHEEL_SETTLE_MS = 140;
 const FLING_MIN_SPEED = 1.4;
 const FLING_MIN_MS = 140;
 const FLING_MAX_MS = 280;
+const COPIED_LINGER_MS = 900;
 
 interface Card {
   key: string;
@@ -32,7 +34,9 @@ function cardKey(notice: OverlayNotice): string {
 
 interface OverlayProps {
   subscribe: (handler: (notice: OverlayNotice) => void) => () => void;
+  ttlMs: number | null;
   onOpen: (conversationId: string) => void;
+  onUserDismiss: () => void;
   onResize: (height: number) => void;
 }
 
@@ -51,6 +55,42 @@ function cardLabel(card: Card): string {
     card.conversation.displayName ??
     card.conversation.participants.map((p) => p.displayName ?? p.handle).join(", ");
   return `${sender} · ${group}`;
+}
+
+function CopyCodeButton({ code, onCopied }: { code: string; onCopied: () => void }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <button
+      className={`overlay-code ${state}`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        copyText(code).then(
+          () => {
+            setState("copied");
+            onCopied();
+          },
+          (err) => {
+            console.warn("Failed to copy verification code", err);
+            setState("failed");
+          }
+        );
+      }}
+    >
+      {state === "copied" ? (
+        <>
+          <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M2 6.5l2.5 2.5L10 3.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Copied
+        </>
+      ) : state === "failed" ? (
+        "Couldn't copy"
+      ) : (
+        `Copy Code ${formatVerificationCode(code)}`
+      )}
+    </button>
+  );
 }
 
 interface SwipeCardProps {
@@ -134,10 +174,12 @@ function SwipeCard({ card, onOpen, onDismiss, children }: SwipeCardProps) {
   );
 }
 
-export function Overlay({ subscribe, onOpen, onResize }: OverlayProps) {
+export function Overlay({ subscribe, ttlMs, onOpen, onUserDismiss, onResize }: OverlayProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const timers = useRef(new Map<string, number>());
   const hovered = useRef(false);
+  const ttlRef = useRef(ttlMs);
+  ttlRef.current = ttlMs;
   const rootRef = useRef<HTMLDivElement>(null);
 
   const dismiss = useCallback((key: string, swiped = false) => {
@@ -153,8 +195,8 @@ export function Overlay({ subscribe, onOpen, onResize }: OverlayProps) {
   const schedule = useCallback(
     (key: string) => {
       clearTimeout(timers.current.get(key));
-      if (hovered.current) return;
-      timers.current.set(key, window.setTimeout(() => dismiss(key), CARD_TTL_MS));
+      if (hovered.current || ttlRef.current === null) return;
+      timers.current.set(key, window.setTimeout(() => dismiss(key), ttlRef.current));
     },
     [dismiss]
   );
@@ -205,17 +247,35 @@ export function Overlay({ subscribe, onOpen, onResize }: OverlayProps) {
       {cards.map((card) => {
         const last = card.messages[card.messages.length - 1];
         const avatar = last.sender ?? card.conversation.participants[0];
+        const code = card.messages
+          .map((m) => findVerificationCode(m.text))
+          .reduce<string | null>((found, next) => next ?? found, null);
         return (
           <SwipeCard
             key={card.key}
             card={card}
             onOpen={() => {
+              onUserDismiss();
               onOpen(card.conversation.id);
               dismiss(card.key);
             }}
-            onDismiss={(swiped) => dismiss(card.key, swiped)}
+            onDismiss={(swiped) => {
+              onUserDismiss();
+              dismiss(card.key, swiped);
+            }}
           >
-            <div className="overlay-label">{cardLabel(card)}</div>
+            <div className="overlay-label-row">
+              <div className="overlay-label">{cardLabel(card)}</div>
+              {code && (
+                <CopyCodeButton
+                  code={code}
+                  onCopied={() => {
+                    onUserDismiss();
+                    setTimeout(() => dismiss(card.key), COPIED_LINGER_MS);
+                  }}
+                />
+              )}
+            </div>
             <div className="overlay-row">
               <div className="overlay-avatar">
                 {avatar && <Avatar participant={avatar} size={30} />}

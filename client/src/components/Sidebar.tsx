@@ -3,7 +3,7 @@ import type { ConnectionStatus } from "../api/bridge";
 import type { Conversation } from "../api/types";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { sidebarTimestamp } from "../utils/time";
-import { ConversationAvatar } from "./Avatar";
+import { Avatar, ConversationAvatar } from "./Avatar";
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -17,6 +17,10 @@ interface SidebarProps {
   connectionLabel: string;
   disconnectLabel: string;
   onDisconnect: () => void;
+  onOpenSettings: () => void;
+  composing: boolean;
+  canCompose: boolean;
+  onCompose: () => void;
 }
 
 const STATUS_LABELS: Record<Exclude<ConnectionStatus, "online">, string> = {
@@ -61,6 +65,10 @@ export function Sidebar({
   connectionLabel,
   disconnectLabel,
   onDisconnect,
+  onOpenSettings,
+  composing,
+  canCompose,
+  onCompose,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -100,18 +108,40 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-search">
-        <svg className="search-icon" viewBox="0 0 16 16" width="13" height="13">
-          <path
-            d="M6.5 1a5.5 5.5 0 1 0 3.37 9.85l3.14 3.14a.75.75 0 1 0 1.06-1.06l-3.14-3.14A5.5 5.5 0 0 0 6.5 1zM2.5 6.5a4 4 0 1 1 8 0 4 4 0 0 1-8 0z"
-            fill="currentColor"
+        <div className="search-field">
+          <svg className="search-icon" viewBox="0 0 16 16" width="13" height="13">
+            <path
+              d="M6.5 1a5.5 5.5 0 1 0 3.37 9.85l3.14 3.14a.75.75 0 1 0 1.06-1.06l-3.14-3.14A5.5 5.5 0 0 0 6.5 1zM2.5 6.5a4 4 0 1 1 8 0 4 4 0 0 1-8 0z"
+              fill="currentColor"
+            />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
           />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        </div>
+        <button
+          className="icon-button compose-button"
+          onClick={onCompose}
+          disabled={!canCompose}
+          title={canCompose ? "New Message (Ctrl+N)" : "This server can't start new conversations yet"}
+        >
+          <svg
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M7.5 2.5H4A1.5 1.5 0 0 0 2.5 4v8A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V8.5" />
+            <path d="M11.8 2.2a1.3 1.3 0 0 1 1.9 1.9L8.3 9.5 6 10l.5-2.3z" />
+          </svg>
+        </button>
       </div>
       {pinned.length > 0 && (
         <div className="pinned-section">
@@ -132,6 +162,17 @@ export function Sidebar({
         </div>
       )}
       <div className="conversation-list" ref={listRef}>
+        {composing && (
+          <div className="conversation-row selected new-message-row">
+            <span className="unread-dot" />
+            <Avatar participant={{ id: "new", displayName: null, handle: "", avatarUrl: null }} size={44} />
+            <div className="conversation-text">
+              <div className="conversation-top">
+                <span className="conversation-name">New Message</span>
+              </div>
+            </div>
+          </div>
+        )}
         {loadError && (
           <div className="load-error">
             <span>Couldn't load conversations.</span>
@@ -169,9 +210,22 @@ export function Sidebar({
           {status !== "online" && <span className={`status-dot ${status}`} />}
           {status === "online" ? connectionLabel : STATUS_LABELS[status]}
         </span>
-        <button className="link-button" onClick={onDisconnect}>
-          {disconnectLabel}
-        </button>
+        <div className="sidebar-footer-actions">
+          <button className="icon-button" onClick={onOpenSettings} title="Settings (Ctrl+,)">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor">
+              <circle cx="8" cy="8" r="4.4" strokeWidth="1.5" />
+              <circle cx="8" cy="8" r="1.6" strokeWidth="1.5" />
+              <path
+                d="M8 1.6v1.9M8 12.5v1.9M1.6 8h1.9M12.5 8h1.9M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M3.5 12.5l1.3-1.3M11.2 4.8l1.3-1.3"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+          <button className="link-button" onClick={onDisconnect}>
+            {disconnectLabel}
+          </button>
+        </div>
       </div>
       {menu && (
         <div

@@ -1,6 +1,9 @@
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_autostart::MacosLauncher;
+
+const HIDDEN_ARG: &str = "--hidden";
 
 fn show_main(app: &AppHandle) {
   let Some(window) = app.get_webview_window("main") else {
@@ -16,6 +19,11 @@ fn show_main(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_autostart::init(
+      MacosLauncher::LaunchAgent,
+      Some(vec![HIDDEN_ARG]),
+    ))
+    .plugin(tauri_plugin_clipboard_manager::init())
     .setup(|app| {
       let open = MenuItem::with_id(app, "open", "Open RyMessage", true, None::<&str>)?;
       let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -42,6 +50,9 @@ pub fn run() {
           }
         })
         .build(app)?;
+      if !std::env::args().any(|arg| arg == HIDDEN_ARG) {
+        show_main(app.handle());
+      }
       Ok(())
     })
     .on_window_event(|window, event| {

@@ -1,8 +1,11 @@
+import { normalizeHandle } from "../utils/handles";
 import type { ConnectionStatus, RyMessageBridge } from "./bridge";
 import type {
   Attachment,
   BridgeEvent,
   Capabilities,
+  Contact,
+  ContactsResponse,
   Conversation,
   Message,
   Participant,
@@ -19,18 +22,51 @@ const capabilities: Capabilities = {
   unsend: false,
   typingIndicators: false,
   markRead: true,
+  compose: true,
+  groupCompose: false,
+  contacts: true,
 };
 
-function person(id: string, name: string, handle: string): Participant {
-  return { id, displayName: name, handle, avatarUrl: null };
+function portrait(bg: [string, string], skin: string, hair: string, shirt: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${bg[0]}"/><stop offset="1" stop-color="${bg[1]}"/></linearGradient></defs><rect width="100" height="100" fill="url(#g)"/><ellipse cx="50" cy="106" rx="38" ry="32" fill="${shirt}"/><circle cx="50" cy="45" r="19" fill="${skin}"/><path d="M30 44c0-15 9-24 20-24s20 9 20 24c-4-8-11-11-20-11s-16 3-20 11z" fill="${hair}"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-const mom = person("p-mom", "Mom", "+15551230001");
-const alex = person("p-alex", "Alex Chen", "+15551230002");
-const sam = person("p-sam", "Sam Rivera", "+15551230003");
+function person(id: string, name: string, handle: string, avatarUrl: string | null = null): Participant {
+  return { id, displayName: name, handle, avatarUrl };
+}
+
+const mom = person("p-mom", "Mom", "+15551230001", portrait(["#f6b1c3", "#e9798f"], "#f1c7a5", "#6b4a3a", "#fff3f6"));
+const alex = person("p-alex", "Alex Chen", "+15551230002", portrait(["#9ad0ff", "#4b8fe0"], "#e8b98f", "#1f1f1f", "#243b6b"));
+const sam = person("p-sam", "Sam Rivera", "+15551230003", portrait(["#b9f2c9", "#44b37a"], "#c68b62", "#2b1d14", "#f5f5f5"));
 const jordan = person("p-jordan", "Jordan Lee", "+15551230004");
 const dylan = person("p-dylan", "Dylan Park", "dylan.park@icloud.com");
-const casey = person("p-casey", "Casey Morgan", "+15551230005");
+const casey = person("p-casey", "Casey Morgan", "+15551230005", portrait(["#ffd9a0", "#f0a04b"], "#f3d2b5", "#b5651d", "#3a3a3a"));
+const shortCode: Participant = { id: "p-46001", displayName: null, handle: "46001", avatarUrl: null };
+
+const CONTACTS_VERSION = "demo-1";
+
+const contacts: Contact[] = [
+  ...[mom, alex, sam, jordan, dylan, casey].map((p) => ({
+    id: `contact-${p.id}`,
+    displayName: p.displayName!,
+    handles: [p.handle],
+    avatarUrl: p.avatarUrl,
+  })),
+  {
+    id: "contact-priya",
+    displayName: "Priya Shah",
+    handles: ["+15551230006"],
+    avatarUrl: portrait(["#d6c4ff", "#8a6be0"], "#b07a55", "#1a1210", "#ffe08a"),
+  },
+  {
+    id: "contact-marcus",
+    displayName: "Marcus Webb",
+    handles: ["marcus.webb@icloud.com", "+15551230007"],
+    avatarUrl: null,
+  },
+  { id: "contact-nina", displayName: "Nina Alvarez", handles: ["+15551230008"], avatarUrl: null },
+];
 
 let messageCounter = 0;
 
@@ -106,6 +142,9 @@ const history: Record<string, Message[]> = {
     msg("c-casey", null, "yeah! what time", 3990, false, "SMS"),
     msg("c-casey", casey, "7ish, bring chips", 3985, true, "SMS"),
     msg("c-casey", null, "on it", 3980, false, "SMS"),
+  ],
+  "c-46001": [
+    msg("c-46001", shortCode, "Your RyMessage verification code is 204 118. Don't share it with anyone.", 2900, true, "SMS"),
   ],
 };
 
@@ -186,6 +225,16 @@ const conversations: Conversation[] = [
     service: "SMS",
     pinned: false,
   },
+  {
+    id: "c-46001",
+    displayName: null,
+    participants: [shortCode],
+    isGroup: false,
+    lastMessage: null,
+    unreadCount: 0,
+    service: "SMS",
+    pinned: false,
+  },
 ];
 
 for (const convo of conversations) {
@@ -203,6 +252,11 @@ const replies: Record<string, string[]> = {
 
 const ambient: { conversationId: string; from: Participant; text: string }[] = [
   { conversationId: "c-alex", from: alex, text: "yo are you watching this" },
+  {
+    conversationId: "c-46001",
+    from: shortCode,
+    text: "Your RyMessage verification code is 482913. It expires in 10 minutes.",
+  },
   { conversationId: "c-mom", from: mom, text: "Did you eat today?" },
   { conversationId: "c-group", from: sam, text: "new trivia category just dropped: 90s movies" },
   { conversationId: "c-casey", from: casey, text: "running like 10 min late" },
@@ -274,6 +328,51 @@ export class MockBridge implements RyMessageBridge {
     this.recordSent(message);
     this.simulateReply(message);
     return message;
+  }
+
+  async startConversation(clientId: string, to: string[], text: string): Promise<Message> {
+    await delay(200);
+    if (to.length !== 1) throw new Error("New group chats aren't supported by this server.");
+    const key = normalizeHandle(to[0]);
+    let convo = conversations.find(
+      (c) => !c.isGroup && normalizeHandle(c.participants[0].handle) === key
+    );
+    if (!convo) {
+      const known = contacts.find((c) => c.handles.some((h) => normalizeHandle(h) === key));
+      const participant: Participant = {
+        id: `p-${key}`,
+        displayName: known?.displayName ?? null,
+        handle: known?.handles.find((h) => normalizeHandle(h) === key) ?? to[0].trim(),
+        avatarUrl: known?.avatarUrl ?? null,
+      };
+      convo = {
+        id: `c-${key}`,
+        displayName: known?.displayName ?? null,
+        participants: [participant],
+        isGroup: false,
+        lastMessage: null,
+        unreadCount: 0,
+        service: "iMessage",
+        pinned: false,
+      };
+      conversations.push(convo);
+      history[convo.id] = [];
+      this.emit({ type: "conversationUpdated", conversation: { ...convo } });
+    }
+    return this.sendMessage(convo.id, clientId, text, null);
+  }
+
+  async getContacts(version: string | null): Promise<ContactsResponse> {
+    await delay(100);
+    return {
+      version: CONTACTS_VERSION,
+      contacts: version === CONTACTS_VERSION ? null : contacts.map((c) => ({ ...c })),
+    };
+  }
+
+  async getAvatar(url: string): Promise<Blob> {
+    const res = await fetch(url);
+    return res.blob();
   }
 
   async setReaction(

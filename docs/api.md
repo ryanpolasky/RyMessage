@@ -34,7 +34,10 @@ The server closes the socket with code `1008` (policy violation) if the first me
     "editing": false,
     "unsend": false,
     "typingIndicators": false,
-    "markRead": true
+    "markRead": true,
+    "compose": true,
+    "groupCompose": false,
+    "contacts": true
   }
 }
 ```
@@ -42,6 +45,8 @@ The server closes the socket with code `1008` (policy violation) if the first me
 Clients must gate features on this response. Unsupported operations return `501` with an error body.
 
 `reactions` and `replies` describe whether the client may send tapbacks and replies. Received reactions and reply references are always included on `Message` whenever the server can read them, regardless of these flags.
+
+`compose` allows starting a conversation with one recipient; `groupCompose` allows more than one. `contacts` means `GET /v1/contacts` is available. Without it, clients build their directory from conversation participants.
 
 ## Types
 
@@ -99,7 +104,18 @@ interface Attachment {
   height: number | null;
   url: string;
 }
+
+interface Contact {
+  id: string;
+  displayName: string;
+  handles: string[];
+  avatarUrl: string | null;
+}
 ```
+
+`Participant.avatarUrl` and `Contact.avatarUrl` are relative paths such as `/v1/avatars/<contactId>?v=<hash>`. Like attachments they require the bearer token. The `v` parameter changes whenever the photo changes, so clients can cache by URL indefinitely.
+
+`Contact.handles` holds phone numbers in E.164 form and lowercase email addresses.
 
 `clientId` echoes the client-generated id supplied at send time so optimistic messages can be reconciled with their final records.
 
@@ -124,6 +140,28 @@ Returns `Message[]` newest-first. `before` pages older history. Default limit 50
 ```
 
 `replyTo` is optional and requires the `replies` capability. Returns the created `Message` with `status: "sending"` or later.
+
+A server that hands sends to another app may not have the final record yet. It then returns a placeholder with `status: "sending"`, and the final record arrives later as `messageCreated` with the same `clientId` and its own `id`. If the final record never arrives, the placeholder is sent again as `messageUpdated` with `status: "failed"`. Clients match all of these by `clientId`.
+
+### POST /v1/messages
+
+```json
+{ "clientId": "uuid", "to": ["+15551230002"], "text": "hello" }
+```
+
+Starts a conversation, or reuses the existing one with exactly these recipients, and sends the first message. `to` accepts phone numbers and email addresses. Requires `compose`, and `groupCompose` when `to` has more than one entry. Returns the created `Message`; its `conversationId` identifies the conversation. The server broadcasts `conversationUpdated` before `messageCreated` when a conversation is new.
+
+### GET /v1/contacts?version=<version>
+
+```json
+{ "version": "b1946ac9", "contacts": [ ] }
+```
+
+Returns the full contact list and an opaque `version`. When the request's `version` matches the current one, `contacts` is `null` (or omitted) and clients keep their cached copy. Requires `contacts`.
+
+### GET /v1/avatars/:contactId
+
+Streams the contact's photo thumbnail. Requires authentication. Responses carry `Cache-Control: private, max-age=31536000, immutable`.
 
 ### POST /v1/conversations/:id/messages/:messageId/reaction
 
@@ -155,7 +193,10 @@ Server pushes:
 { "type": "messageCreated", "message": { } }
 { "type": "messageUpdated", "message": { } }
 { "type": "conversationUpdated", "conversation": { } }
+{ "type": "contactsChanged", "version": "b1946ac9" }
 ```
+
+`contactsChanged` fires when the Mac's Contacts change; clients refetch `GET /v1/contacts` with their cached version.
 
 `messageUpdated` fires on delivery/read status changes, tapback changes, and on reconciliation of optimistic sends (matched via `clientId`).
 
@@ -167,4 +208,6 @@ Events are not replayed. Clients must refetch conversations and any open message
 { "error": { "code": "not_supported", "message": "Reactions are not supported by this server." } }
 ```
 
-Codes: `unauthorized`, `not_found`, `not_supported`, `send_failed`, `invalid_request`, `internal`.
+Codes: `unauthorized`, `not_found`, `not_supported`, `send_failed`, `invalid_request`, `permission_required`, `internal`.
+
+`permission_required` (HTTP 503) means the server is running but the host OS hasn't granted it access yet; the message says what to enable.

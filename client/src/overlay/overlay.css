@@ -65,9 +65,7 @@ html.overlay-preview body {
 }
 
 .overlay-label {
-  display: inline-block;
-  max-width: calc(100% - 40px);
-  margin: 0 0 4px 40px;
+  min-width: 0;
   padding: 2px 9px;
   border-radius: 10px;
   background: var(--overlay-label-bg);
@@ -77,6 +75,55 @@ html.overlay-preview body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.overlay-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px 40px;
+}
+
+.overlay-code {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #ffffff;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  opacity: 0;
+  transform: scale(0.85);
+  transition:
+    opacity 0.15s ease,
+    transform 0.25s var(--spring),
+    background 0.2s ease;
+}
+
+.overlay-card:hover .overlay-code,
+.overlay-code.copied,
+.overlay-code.failed {
+  opacity: 1;
+  transform: none;
+}
+
+.overlay-code:hover {
+  filter: brightness(1.1);
+}
+
+.overlay-code.copied {
+  background: #30d158;
+}
+
+.overlay-code.failed {
+  background: #ff453a;
 }
 
 .overlay-row {

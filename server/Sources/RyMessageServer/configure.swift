@@ -34,6 +34,12 @@ func configure(_ app: Application) throws {
     let provider = ChatDBProvider()
     let hub = EventHub()
     try routes(app, provider: provider, hub: hub, token: config.token)
+    provider.startWatching(hub: hub, logger: app.logger)
 
-    Pairing.printInstructions(config: config)
+    // the pairing code contains the token, so keep it out of the background service's log file
+    if isatty(STDOUT_FILENO) != 0 {
+        Pairing.printInstructions(config: config)
+    } else {
+        app.logger.info("Listening on port \(config.port). Show the pairing code with: rymessage-server --pairing-code")
+    }
 }

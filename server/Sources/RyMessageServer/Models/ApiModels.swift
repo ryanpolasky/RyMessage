@@ -9,6 +9,27 @@ struct Capabilities: Content {
     var unsend: Bool
     var typingIndicators: Bool
     var markRead: Bool
+    var compose: Bool
+    var groupCompose: Bool
+    var contacts: Bool
+}
+
+struct Contact: Content {
+    var id: String
+    var displayName: String
+    var handles: [String]
+    var avatarUrl: String?
+}
+
+struct ContactsResponse: Content {
+    var version: String
+    var contacts: [Contact]?
+}
+
+struct StartConversationRequest: Content {
+    var clientId: String
+    var to: [String]
+    var text: String
 }
 
 struct CapabilitiesResponse: Content {
@@ -103,6 +124,7 @@ enum BridgeEvent {
     case messageCreated(Message)
     case messageUpdated(Message)
     case conversationUpdated(Conversation)
+    case contactsChanged(version: String)
 }
 
 extension BridgeEvent: Encodable {
@@ -110,6 +132,7 @@ extension BridgeEvent: Encodable {
         case type
         case message
         case conversation
+        case version
     }
 
     func encode(to encoder: Encoder) throws {
@@ -124,6 +147,9 @@ extension BridgeEvent: Encodable {
         case .conversationUpdated(let conversation):
             try container.encode("conversationUpdated", forKey: .type)
             try container.encode(conversation, forKey: .conversation)
+        case .contactsChanged(let version):
+            try container.encode("contactsChanged", forKey: .type)
+            try container.encode(version, forKey: .version)
         }
     }
 }
@@ -150,7 +176,19 @@ struct ApiError: AbortError {
         ApiError(status: .notFound, code: "not_found", reason: message)
     }
 
+    static func invalidRequest(_ message: String) -> ApiError {
+        ApiError(status: .badRequest, code: "invalid_request", reason: message)
+    }
+
     static func notSupported(_ message: String) -> ApiError {
         ApiError(status: .notImplemented, code: "not_supported", reason: message)
+    }
+
+    static func sendFailed(_ message: String) -> ApiError {
+        ApiError(status: .badGateway, code: "send_failed", reason: message)
+    }
+
+    static func permissionRequired(_ message: String) -> ApiError {
+        ApiError(status: .serviceUnavailable, code: "permission_required", reason: message)
     }
 }

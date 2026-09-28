@@ -24,14 +24,52 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
         if body.replyTo != nil && !provider.capabilities.replies {
             throw ApiError.notSupported("Replies are not supported by this server.")
         }
-        let message = try await provider.sendMessage(
+        return try await provider.sendMessage(
             conversationId: id,
             clientId: body.clientId,
             text: body.text,
             replyTo: body.replyTo
         )
-        await hub.broadcast(.messageCreated(message))
+    }
+
+    v1.post("messages") { req -> Message in
+        let body = try req.content.decode(StartConversationRequest.self)
+        let recipients = body.to.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !recipients.isEmpty else {
+            throw ApiError.invalidRequest("At least one recipient is required.")
+        }
+        guard provider.capabilities.compose else {
+            throw ApiError.notSupported("Starting conversations is not supported by this server.")
+        }
+        if recipients.count > 1 && !provider.capabilities.groupCompose {
+            throw ApiError.notSupported("New group chats are not supported by this server.")
+        }
+        let (message, created) = try await provider.startConversation(
+            clientId: body.clientId,
+            to: recipients,
+            text: body.text
+        )
+        if let created {
+            await hub.broadcast(.conversationUpdated(created))
+        }
         return message
+    }
+
+    v1.get("contacts") { req -> ContactsResponse in
+        guard provider.capabilities.contacts else {
+            throw ApiError.notSupported("Contacts are not supported by this server.")
+        }
+        return try await provider.contacts(since: req.query[String.self, at: "version"])
+    }
+
+    v1.get("avatars", ":contactId") { req -> Response in
+        let contactId = try req.parameters.require("contactId")
+        let (mimeType, data) = try await provider.avatar(contactId: contactId)
+        let response = Response(status: .ok)
+        response.headers.contentType = HTTPMediaType.parse(mimeType)
+        response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=31536000, immutable")
+        response.body = .init(buffer: data)
+        return response
     }
 
     v1.post("conversations", ":id", "messages", ":messageId", "reaction") { req -> Message in
@@ -50,15 +88,13 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
         let id = try req.parameters.require("id")
         let clientId = try req.content.get(String.self, at: "clientId")
         let file = try req.content.get(File.self, at: "file")
-        let message = try await provider.sendAttachment(
+        return try await provider.sendAttachment(
             conversationId: id,
             clientId: clientId,
             fileName: file.filename,
             mimeType: file.contentType?.serialize() ?? "application/octet-stream",
             data: file.data
         )
-        await hub.broadcast(.messageCreated(message))
-        return message
     }
 
     v1.post("conversations", ":id", "read") { req -> HTTPStatus in

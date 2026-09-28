@@ -3,6 +3,7 @@ import type {
   Attachment,
   BridgeEvent,
   Capabilities,
+  ContactsResponse,
   Conversation,
   Message,
   TapbackKind,
@@ -51,6 +52,10 @@ export class RemoteBridge implements RyMessageBridge {
     });
   }
 
+  startConversation(clientId: string, to: string[], text: string): Promise<Message> {
+    return this.request("POST", "/v1/messages", { clientId, to, text });
+  }
+
   setReaction(conversationId: string, messageId: string, kind: TapbackKind | null): Promise<Message> {
     return this.request("POST", `/v1/conversations/${conversationId}/messages/${messageId}/reaction`, {
       kind,
@@ -74,10 +79,23 @@ export class RemoteBridge implements RyMessageBridge {
     await this.request("POST", `/v1/conversations/${conversationId}/read`);
   }
 
-  async getAttachment(attachment: Attachment): Promise<Blob> {
-    const url = attachment.url.startsWith("/") ? `${this.baseUrl}${attachment.url}` : attachment.url;
+  getAttachment(attachment: Attachment): Promise<Blob> {
+    return this.fetchBlob(attachment.url);
+  }
+
+  getContacts(version: string | null): Promise<ContactsResponse> {
+    const query = version ? `?${new URLSearchParams({ version })}` : "";
+    return this.request("GET", `/v1/contacts${query}`);
+  }
+
+  getAvatar(url: string): Promise<Blob> {
+    return this.fetchBlob(url);
+  }
+
+  private async fetchBlob(path: string): Promise<Blob> {
+    const url = path.startsWith("/") ? `${this.baseUrl}${path}` : path;
     if (new URL(url).origin !== new URL(this.baseUrl).origin) {
-      throw new Error("Attachment is hosted on a different server.");
+      throw new Error("Refusing to send the server token to a different host.");
     }
     const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } });
     if (!res.ok) throw await this.toError(res);

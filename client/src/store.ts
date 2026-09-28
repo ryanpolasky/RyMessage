@@ -149,6 +149,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
       wasOnline = true;
     });
     const offEvents = bridge.subscribe((event) => {
+      if (event.type === "contactsChanged") return;
       if (event.type === "conversationUpdated") {
         const incoming = event.conversation;
         setConversations((prev) => {
@@ -211,7 +212,10 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
       };
       applyMessage(optimistic);
       deliver(clientId).then(
-        (final) => applyMessage(final, false),
+        (final) => {
+          // a still-sending reply is a server placeholder; keep the local preview until the real record arrives
+          if (final.status !== "sending") applyMessage(final, false);
+        },
         () => applyMessage({ ...optimistic, status: "failed" }, false)
       );
     },
@@ -265,6 +269,17 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     [bridge, send]
   );
 
+  const startConversation = useCallback(
+    async (to: string[], text: string): Promise<string> => {
+      const message = await bridge.startConversation(crypto.randomUUID(), to, text);
+      if (!conversationsRef.current?.some((c) => c.id === message.conversationId)) {
+        setConversations(await bridge.getConversations());
+      }
+      return message.conversationId;
+    },
+    [bridge]
+  );
+
   const retryLoadMessages = useCallback(() => {
     if (selectedIdRef.current) loadMessages(selectedIdRef.current);
   }, [loadMessages]);
@@ -300,6 +315,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     selectConversation,
     sendText,
     sendFile,
+    startConversation,
     setReaction,
     togglePin,
   };

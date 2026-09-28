@@ -71,8 +71,6 @@ export function MessageList({
     setMenu({
       message,
       anchor: e.currentTarget.getBoundingClientRect(),
-      x: e.clientX,
-      y: e.clientY,
       canReact,
       canReply,
     });

@@ -18,7 +18,9 @@
         "height": 720,
         "minWidth": 700,
         "minHeight": 480,
-        "center": true
+        "center": true,
+        "visible": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       },
       {
         "label": "overlay",
@@ -36,7 +38,8 @@
         "skipTaskbar": true,
         "resizable": false,
         "focus": false,
-        "focusable": false
+        "focusable": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {

@@ -1,12 +1,12 @@
 import { useEffect } from "react";
 import type { Message, TapbackKind } from "../api/types";
+import { copyText } from "../desktop";
+import { findVerificationCode, formatVerificationCode } from "../utils/verificationCode";
 import { TAPBACKS, TapbackIcon } from "./Tapback";
 
 export interface MessageMenuState {
   message: Message;
   anchor: DOMRect;
-  x: number;
-  y: number;
   canReact: boolean;
   canReply: boolean;
 }
@@ -19,9 +19,10 @@ interface MessageMenuProps {
 }
 
 const EDGE = 8;
+const GAP = 6;
 const PICKER_WIDTH = 204;
 const PICKER_HEIGHT = 42;
-const MENU_WIDTH = 150;
+const MENU_WIDTH = 170;
 const MENU_ITEM_HEIGHT = 22;
 
 function clamp(value: number, min: number, max: number): number {
@@ -42,22 +43,47 @@ export function MessageMenu({ menu, onReact, onReply, onClose }: MessageMenuProp
 
   const items: { label: string; run: () => void }[] = [];
   if (canReply) items.push({ label: "Reply", run: () => onReply(message) });
+  const code = message.isFromMe ? null : findVerificationCode(message.text);
+  if (code) {
+    items.push({ label: `Copy Code ${formatVerificationCode(code)}`, run: () => void copyText(code) });
+  }
   if (message.text) {
     const text = message.text;
-    items.push({ label: "Copy", run: () => navigator.clipboard.writeText(text) });
+    items.push({ label: "Copy", run: () => void copyText(text) });
   }
 
-  const pickerAbove = anchor.top - PICKER_HEIGHT - EDGE >= EDGE;
-  const pickerTop = pickerAbove ? anchor.top - PICKER_HEIGHT - 6 : anchor.bottom + 6;
+  const hasMenu = items.length > 0;
+  const menuHeight = hasMenu ? items.length * MENU_ITEM_HEIGHT + 10 : 0;
+  const pickerHeight = canReact ? PICKER_HEIGHT : 0;
+  const bottomLimit = window.innerHeight - EDGE;
+
+  // tapbacks sit above the bubble and the menu below it; near the bottom both stack above
+  const menuBelow = !hasMenu || anchor.bottom + GAP + menuHeight <= bottomLimit;
+  let menuTop: number;
+  let pickerTop: number;
+  if (menuBelow) {
+    menuTop = anchor.bottom + GAP;
+    const roomAbove = anchor.top - GAP - pickerHeight >= EDGE;
+    pickerTop = roomAbove
+      ? anchor.top - GAP - pickerHeight
+      : (hasMenu ? menuTop + menuHeight : anchor.bottom) + GAP;
+  } else {
+    menuTop = Math.max(EDGE, anchor.top - GAP - menuHeight);
+    pickerTop = Math.max(EDGE, menuTop - GAP - pickerHeight);
+  }
+  const pickerBelow = pickerTop > anchor.top;
+
+  const alignRight = message.isFromMe;
   const pickerLeft = clamp(
-    message.isFromMe ? anchor.right - PICKER_WIDTH : anchor.left,
+    alignRight ? anchor.right - PICKER_WIDTH : anchor.left,
     EDGE,
     window.innerWidth - PICKER_WIDTH - EDGE
   );
-  const menuHeight = items.length * MENU_ITEM_HEIGHT + 10;
-  const minMenuTop = canReact && !pickerAbove ? pickerTop + PICKER_HEIGHT + 6 : EDGE;
-  const menuTop = clamp(menu.y, minMenuTop, window.innerHeight - menuHeight - EDGE);
-  const menuLeft = clamp(menu.x, EDGE, window.innerWidth - MENU_WIDTH - EDGE);
+  const menuLeft = clamp(
+    alignRight ? anchor.right - MENU_WIDTH : anchor.left,
+    EDGE,
+    window.innerWidth - MENU_WIDTH - EDGE
+  );
 
   return (
     <div
@@ -70,7 +96,7 @@ export function MessageMenu({ menu, onReact, onReply, onClose }: MessageMenuProp
     >
       {canReact && (
         <div
-          className={`tapback-picker ${message.isFromMe ? "grow-left" : ""} ${pickerAbove ? "" : "below"}`}
+          className={`tapback-picker ${alignRight ? "grow-left" : ""} ${pickerBelow ? "below" : ""}`}
           style={{ left: pickerLeft, top: pickerTop }}
         >
           {TAPBACKS.map(({ kind, label }, i) => (
@@ -86,8 +112,11 @@ export function MessageMenu({ menu, onReact, onReply, onClose }: MessageMenuProp
           ))}
         </div>
       )}
-      {items.length > 0 && (
-        <div className="context-menu" style={{ left: menuLeft, top: menuTop, minWidth: MENU_WIDTH }}>
+      {hasMenu && (
+        <div
+          className={`context-menu message-menu ${alignRight ? "align-right" : ""} ${menuBelow ? "" : "above"}`}
+          style={{ left: menuLeft, top: menuTop, width: MENU_WIDTH }}
+        >
           {items.map((item) => (
             <button key={item.label} className="context-item" onClick={item.run}>
               {item.label}
