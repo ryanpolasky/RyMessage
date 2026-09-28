@@ -122,16 +122,29 @@ sign_binary() {
     echo "step: unlock keychain (password not accepted)" >>"$SIGN_LOG"
     return 1
   fi
+  # codesign only finds identities in keychains on the search list, so it's added just while signing
+  local -a original
+  eval "original=($(security list-keychains -d user))"
+  security list-keychains -d user -s "${original[@]}" "$SIGNING_KEYCHAIN"
+  local fingerprint
+  fingerprint="$(security find-identity -p codesigning "$SIGNING_KEYCHAIN" 2>/dev/null |
+    awk -v name="\"$SIGNING_IDENTITY\"" 'index($0, name) { print $2; exit }')"
   { echo "step: sign" &&
-    codesign --force --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" \
+    codesign --force --keychain "$SIGNING_KEYCHAIN" --sign "${fingerprint:-$SIGNING_IDENTITY}" \
       --identifier app.rymessage.server "$BINARY"; } >>"$SIGN_LOG" 2>&1
   result=$?
+  if [[ $result != 0 ]]; then
+    security find-identity -p codesigning "$SIGNING_KEYCHAIN" 2>&1 | grep "$SIGNING_IDENTITY" | head -n 1 >>"$SIGN_LOG"
+  fi
+  security list-keychains -d user -s "${original[@]}"
   security lock-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
   return $result
 }
+signed_by_us() { codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; }
 
-BUILT_HASH="$(shasum -a 256 "$BUILT" | awk '{ print $1 }')"
-if [[ -f "$BINARY" && "$(cat "$INSTALL_DIR/.build-hash" 2>/dev/null || true)" == "$BUILT_HASH" ]]; then
+BUILT_HASH="$(LC_ALL=C shasum -a 256 "$BUILT" | awk '{ print $1 }')"
+if [[ -f "$BINARY" && "$(cat "$INSTALL_DIR/.build-hash" 2>/dev/null || true)" == "$BUILT_HASH" ]] &&
+  { [[ ! -f "$SIGNING_KEYCHAIN" ]] || signed_by_us; }; then
   note "The server hasn't changed since the last install, so it's kept as is."
 else
   # overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
@@ -145,11 +158,24 @@ else
     note "Enter the signing keychain password to sign the new server."
     sign_binary || true
   fi
-  if codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; then
+  CERT_PEM="$INSTALL_DIR/signing-certificate.pem"
+  if ! signed_by_us && [[ -f "$SIGNING_KEYCHAIN" ]] &&
+    security find-certificate -c "$SIGNING_IDENTITY" -p "$SIGNING_KEYCHAIN" >"$CERT_PEM" 2>/dev/null; then
+    note "codesign wants the certificate trusted for code signing. macOS asks for your password once."
+    if security add-trusted-cert -p codeSign -k "$SIGNING_KEYCHAIN" "$CERT_PEM" >>"$SIGN_LOG" 2>&1; then
+      note "Trusted. Enter the signing keychain password again to sign."
+      sign_binary || true
+    else
+      note "Trusting needs the Mac's own screen, which an SSH session can't show. Once, in Terminal through"
+      note "Screen Sharing, run this and then ./install.sh again:"
+      note "  security add-trusted-cert -p codeSign -k \"$SIGNING_KEYCHAIN\" \"$CERT_PEM\""
+    fi
+  fi
+  if signed_by_us; then
     note "Signed with your local certificate, so macOS keeps its permissions."
   else
     note "Couldn't sign with the local certificate, so macOS may ask for permissions again. It stopped at:"
-    grep -v '^\s*$' "$SIGN_LOG" | tail -n 3 | sed 's/^/      /'
+    grep -v '^\s*$' "$SIGN_LOG" | tail -n 4 | sed 's/^/      /'
   fi
 fi
 rm -f "$SIGN_LOG"
