@@ -54,6 +54,11 @@ BUILT="$(swift build -c release --show-bin-path)/RyMessageServer"
 step "Installing"
 mkdir -p "$INSTALL_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+# bootout returns before the old service is fully gone, and registering again too early fails
+for _ in $(seq 1 30); do
+  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+  sleep 0.5
+done
 # overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
 rm -f "$BINARY"
 cp "$BUILT" "$BINARY"
@@ -61,6 +66,10 @@ note "$BINARY"
 
 # macOS ties permissions to the signature; a fixed local certificate keeps them across rebuilds
 SIGNING_IDENTITY="RyMessage Local Signing"
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+has_signing_identity() { security find-identity -p codesigning 2>/dev/null | grep -q "\"$SIGNING_IDENTITY\""; }
+# codesign only accepts a self-made certificate once it's trusted for code signing
+trust_certificate() { security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$1" >/dev/null 2>&1; }
 create_signing_identity() {
   local dir result
   dir="$(mktemp -d)"
@@ -80,22 +89,35 @@ CONF
       -keyout "$dir/key.pem" -out "$dir/cert.pem" >/dev/null 2>&1 &&
     /usr/bin/openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" -name "$SIGNING_IDENTITY" \
       -out "$dir/identity.p12" -passout pass:rymessage >/dev/null 2>&1 &&
-    security import "$dir/identity.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P rymessage \
-      -T /usr/bin/codesign >/dev/null 2>&1
+    security import "$dir/identity.p12" -k "$KEYCHAIN" -P rymessage -T /usr/bin/codesign >/dev/null 2>&1 &&
+    trust_certificate "$dir/cert.pem"
   result=$?
   rm -rf "$dir"
   return $result
 }
-if ! security find-certificate -c "$SIGNING_IDENTITY" >/dev/null 2>&1; then
+SIGN_LOG="$(mktemp)"
+sign_binary() {
+  codesign --force --sign "$SIGNING_IDENTITY" --identifier app.rymessage.server "$BINARY" >"$SIGN_LOG" 2>&1
+}
+if ! has_signing_identity; then
+  security delete-certificate -c "$SIGNING_IDENTITY" "$KEYCHAIN" >/dev/null 2>&1 || true
   note "Creating a local signing certificate so permissions survive future updates."
-  note "If macOS asks to let codesign use it, enter your password and click Always Allow."
+  note "macOS will ask for your password to trust it. If it asks to let codesign use it, click Always Allow."
   create_signing_identity || true
 fi
-if codesign --force --sign "$SIGNING_IDENTITY" --identifier app.rymessage.server "$BINARY" >/dev/null 2>&1; then
+if ! sign_binary && has_signing_identity; then
+  note "Trusting the local signing certificate. macOS will ask for your password."
+  security find-certificate -c "$SIGNING_IDENTITY" -p "$KEYCHAIN" > "$SIGN_LOG.pem" 2>/dev/null &&
+    trust_certificate "$SIGN_LOG.pem" || true
+  sign_binary || true
+fi
+if codesign -dv "$BINARY" 2>&1 | grep -q "Authority=$SIGNING_IDENTITY"; then
   note "Signed with your local certificate."
 else
   note "Couldn't sign with a local certificate, so macOS will ask for permissions again after updates."
+  note "codesign said: $(tail -n 1 "$SIGN_LOG")"
 fi
+rm -f "$SIGN_LOG" "$SIGN_LOG.pem"
 "$BINARY" --pairing-code >/dev/null
 
 port_in_use() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
@@ -166,12 +188,13 @@ PLIST
 touch "$LOG"
 chmod 600 "$LOG"
 START_LINE=$(($(wc -l < "$LOG") + 1))
-for attempt in 1 2 3 4 5; do
-  if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
+for attempt in $(seq 1 10); do
+  if BOOTSTRAP_ERROR="$(launchctl bootstrap "$DOMAIN" "$PLIST" 2>&1)"; then
     break
   fi
-  if [[ $attempt == 5 ]]; then
-    echo "Couldn't register the background service. Try: launchctl bootstrap $DOMAIN \"$PLIST\""
+  if [[ $attempt == 10 ]]; then
+    echo "Couldn't register the background service: $BOOTSTRAP_ERROR"
+    echo "Try: launchctl bootstrap $DOMAIN \"$PLIST\""
     exit 1
   fi
   sleep 1
