@@ -58,6 +58,21 @@ cp -f "$BUILT" "$BINARY"
 "$BINARY" --pairing-code >/dev/null
 note "$BINARY"
 
+port_in_use() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
+port_owner() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $1 }' | sort -u | paste -sd "," - | sed 's/,/, /g'
+}
+PORT="$(config_value port)"
+if port_in_use "$PORT"; then
+  OWNER="$(port_owner "$PORT")"
+  FREE="$PORT"
+  while port_in_use "$FREE"; do
+    FREE=$((FREE + 1))
+  done
+  note "Port $PORT is already taken by ${OWNER:-another app}, so RyMessage will use $FREE."
+  "$BINARY" --set-port "$FREE" | sed 's/^/    /'
+fi
+
 if [[ -z "$(config_value advertisedURL)" ]]; then
   TAILSCALE=""
   for candidate in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do

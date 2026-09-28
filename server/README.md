@@ -17,7 +17,7 @@ cd RyMessage/server
 The script:
 
 1. Installs Apple's command line tools if they're missing, offers to update them if their Swift is older than 6, then builds the server.
-2. Installs it to `~/Library/Application Support/RyMessage/` and registers a LaunchAgent, so it starts whenever you log in and restarts itself if it ever quits.
+2. Installs it to `~/Library/Application Support/RyMessage/` and registers a LaunchAgent, so it starts whenever you log in and restarts itself if it ever quits. If port 8787 is taken, it moves to the next free port.
 3. Offers to put your Tailscale address in the pairing code, if Tailscale is installed.
 4. Walks you through the one-time **Full Disk Access** permission. It opens the right System Settings page and a Finder window with the server selected, so you just drag it in.
 5. Watches for the one-time **Automation** prompt ("rymessage-server wants to control Messages"). Click OK.
