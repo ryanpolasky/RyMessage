@@ -28,9 +28,26 @@ if ! xcode-select -p >/dev/null 2>&1; then
   note "Run ./install.sh again once that finishes."
   exit 1
 fi
-note "Found them."
+SWIFT_MAJOR="$(swift --version 2>/dev/null | sed -nE 's/.*Swift version ([0-9]+)\..*/\1/p' | head -n 1)"
+if [[ -z "$SWIFT_MAJOR" || "$SWIFT_MAJOR" -lt 6 ]]; then
+  note "These tools have Swift ${SWIFT_MAJOR:-unknown}, and RyMessage needs Swift 6 or newer."
+  TOOLS_UPDATE="$(softwareupdate --list 2>&1 | sed -nE 's/^\* Label: (Command Line Tools.*)$/\1/p' | tail -n 1)"
+  if [[ -z "$TOOLS_UPDATE" ]]; then
+    note "No update is offered. Reinstall the tools, then run ./install.sh again:"
+    note "  sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
+    exit 1
+  fi
+  answer=""
+  read -r -p "    Install $TOOLS_UPDATE now? [Y/n] " answer || true
+  if [[ "$answer" =~ ^[Nn] ]]; then
+    exit 1
+  fi
+  softwareupdate --install "$TOOLS_UPDATE"
+fi
+note "Found Swift $(swift --version 2>/dev/null | sed -nE 's/.*Swift version ([0-9.]+).*/\1/p' | head -n 1)."
 
 step "Building (the first build downloads dependencies and takes a few minutes)"
+note "A warning about XCTest paths is expected with the command line tools and is harmless."
 swift build -c release
 BUILT="$(swift build -c release --show-bin-path)/RyMessageServer"
 
