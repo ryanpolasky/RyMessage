@@ -126,6 +126,7 @@ function Messenger({
           selectedId={composing ? null : (store.selected?.id ?? null)}
           onSelect={openConversation}
           onTogglePin={store.togglePin}
+          onDelete={store.hideConversation}
           status={store.status}
           connectionLabel={connectionLabel}
           disconnectLabel={connection.mode === "demo" ? "Exit" : "Disconnect"}

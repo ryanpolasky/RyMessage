@@ -1,5 +1,4 @@
 import Foundation
-import UniformTypeIdentifiers
 import Vapor
 
 actor MessagesStore {
@@ -11,9 +10,15 @@ actor MessagesStore {
     }
 
     struct SendTarget: Sendable {
-        let chatId: Int64
+        let conversationId: String
         let guid: String
         let handle: String?
+    }
+
+    struct AttachmentFile: Sendable {
+        let url: URL
+        let fileName: String
+        let declaredMimeType: String?
     }
 
     private static let messageColumns = """
@@ -38,9 +43,10 @@ actor MessagesStore {
     private let contacts: ContactsBook
     private var database: SQLiteConnection?
     private var participants: [Int64: Participant] = [:]
+    private var chatGroups: [Int64: [Int64]] = [:]
     private var lastRowID: Int64?
     private var outgoingSignatures: [String: String] = [:]
-    private var pending: [Int64: [Pending]] = [:]
+    private var pending: [String: [Pending]] = [:]
     private var pollCount = 0
 
     init(contacts: ContactsBook) {
@@ -61,55 +67,111 @@ actor MessagesStore {
         }
     }
 
+    // Messages keeps separate iMessage and SMS chats per contact; they're shown as one conversation
+    private func group(for chatId: Int64) throws -> [Int64] {
+        if let known = chatGroups[chatId] { return known }
+        let rows = try connection().query("SELECT ROWID AS rowid, chat_identifier AS identifier, style AS style FROM chat")
+        var byHandle: [String: [Int64]] = [:]
+        var groups: [Int64: [Int64]] = [:]
+        for row in rows {
+            guard let rowid = row.int("rowid") else { continue }
+            if row.int("style") == 45, let identifier = row.string("identifier") {
+                byHandle[normalizeHandle(identifier), default: []].append(rowid)
+            } else {
+                groups[rowid] = [rowid]
+            }
+        }
+        for ids in byHandle.values {
+            let sorted = ids.sorted()
+            for id in sorted { groups[id] = sorted }
+        }
+        chatGroups = groups
+        return groups[chatId] ?? [chatId]
+    }
+
+    private static func conversationId(_ chatIds: [Int64]) -> String {
+        chatIds.sorted().map(String.init).joined(separator: "-")
+    }
+
+    private static func chatIds(_ conversationId: String) throws -> [Int64] {
+        let ids = conversationId.split(separator: "-").compactMap { Int64($0) }
+        guard !ids.isEmpty else { throw ApiError.notFound("Conversation not found.") }
+        return ids
+    }
+
+    private static func placeholders(_ count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ",")
+    }
+
     func conversations() throws -> [Conversation] {
         let rows = try connection().query("""
             SELECT chat_rowid, last_date FROM (
                 SELECT c.ROWID AS chat_rowid, (SELECT MAX(message_date) FROM chat_message_join WHERE chat_id = c.ROWID) AS last_date
                 FROM chat c
-            ) WHERE last_date IS NOT NULL ORDER BY last_date DESC LIMIT 150
+            ) WHERE last_date IS NOT NULL ORDER BY last_date DESC LIMIT 200
             """)
-        return try rows.compactMap { $0.int("chat_rowid") }.map { try conversation($0) }
+        var seen = Set<String>()
+        var result: [Conversation] = []
+        for chatId in rows.compactMap({ $0.int("chat_rowid") }) {
+            let ids = try group(for: chatId)
+            guard seen.insert(Self.conversationId(ids)).inserted else { continue }
+            let merged = try conversation(chatIds: ids)
+            result.append(merged)
+            if result.count == 150 { break }
+        }
+        return result
     }
 
-    func conversation(_ chatId: Int64) throws -> Conversation {
-        let chat = try chatRow(chatId)
-        let memberRows = try connection().query(
-            "SELECT handle_id AS handle_id FROM chat_handle_join WHERE chat_id = ?", [.int(chatId)]
-        )
-        var members = try memberRows.compactMap { $0.int("handle_id") }.compactMap { try participant($0) }
-        if members.isEmpty, let identifier = chat.string("identifier") {
+    func conversation(id: String) throws -> Conversation {
+        try conversation(chatIds: Self.chatIds(id))
+    }
+
+    private func conversation(chatIds: [Int64]) throws -> Conversation {
+        let primary = try primaryChat(chatIds)
+        let list = Self.placeholders(chatIds.count)
+        let bound = chatIds.map { SQLiteValue.int($0) }
+        let memberIds = try connection().query(
+            "SELECT DISTINCT handle_id AS handle_id FROM chat_handle_join WHERE chat_id IN (\(list))", bound
+        ).compactMap { $0.int("handle_id") }
+        var members: [Participant] = []
+        for handleId in memberIds {
+            if let member = try participant(handleId), !members.contains(where: { $0.id == member.id }) {
+                members.append(member)
+            }
+        }
+        if members.isEmpty, let identifier = primary.string("identifier") {
             members = [directParticipant(identifier)]
         }
         let unread = try connection().query("""
             SELECT COUNT(*) AS count FROM chat_message_join cmj JOIN message m ON m.ROWID = cmj.message_id
-            WHERE cmj.chat_id = ? AND m.is_from_me = 0 AND m.is_read = 0 AND m.item_type = 0 AND m.associated_message_type = 0
-            """, [.int(chatId)]).first?.int("count") ?? 0
-        let last = try messages(chatId: chatId, before: nil, limit: 1).first
-        let name = chat.string("display_name").flatMap { $0.isEmpty ? nil : $0 }
+            WHERE cmj.chat_id IN (\(list)) AND m.is_from_me = 0 AND m.is_read = 0 AND m.item_type = 0 \
+            AND m.associated_message_type = 0
+            """, bound).first?.int("count") ?? 0
+        let last = try messages(chatIds: chatIds, before: nil, limit: 1).first
+        let name = primary.string("display_name").flatMap { $0.isEmpty ? nil : $0 }
         return Conversation(
-            id: String(chatId),
+            id: Self.conversationId(chatIds),
             displayName: name,
             participants: members,
-            isGroup: chat.int("style") == 43,
+            isGroup: primary.int("style") == 43,
             lastMessage: last,
             unreadCount: Int(unread),
-            service: Self.service(chat.string("service")) ?? .iMessage,
+            service: Self.service(primary.string("service")) ?? .iMessage,
             pinned: false
         )
     }
 
     func messages(conversationId: String, before: String?, limit: Int) throws -> [Message] {
-        guard let chatId = Int64(conversationId) else { throw ApiError.notFound("Conversation not found.") }
-        return try messages(chatId: chatId, before: before, limit: limit)
+        try messages(chatIds: Self.chatIds(conversationId), before: before, limit: limit)
     }
 
-    private func messages(chatId: Int64, before: String?, limit: Int) throws -> [Message] {
-        let chat = try chatRow(chatId)
+    private func messages(chatIds: [Int64], before: String?, limit: Int) throws -> [Message] {
+        let primary = try primaryChat(chatIds)
         var sql = """
             SELECT \(Self.messageColumns) FROM chat_message_join cmj JOIN message m ON m.ROWID = cmj.message_id
-            WHERE cmj.chat_id = ? AND m.associated_message_type = 0 AND m.item_type = 0
+            WHERE cmj.chat_id IN (\(Self.placeholders(chatIds.count))) AND m.associated_message_type = 0 AND m.item_type = 0
             """
-        var parameters: [SQLiteValue] = [.int(chatId)]
+        var parameters = chatIds.map { SQLiteValue.int($0) }
         if let before {
             sql += " AND m.date < (SELECT date FROM message WHERE guid = ?)"
             parameters.append(.text(before))
@@ -117,10 +179,10 @@ actor MessagesStore {
         sql += " ORDER BY m.date DESC LIMIT ?"
         parameters.append(.int(Int64(max(1, min(limit, 200)))))
         let rows = try connection().query(sql, parameters)
-        return try build(rows, chatId: chatId, chatService: Self.service(chat.string("service")))
+        return try build(rows, chatIds: chatIds, chatService: Self.service(primary.string("service")))
     }
 
-    func attachmentData(id: String) throws -> (Attachment, Data) {
+    func attachmentFile(id: String) throws -> AttachmentFile {
         guard let rowid = Int64(id),
               let row = try connection().query(
                   "SELECT filename AS filename, mime_type AS mime_type, transfer_name AS transfer_name FROM attachment WHERE ROWID = ?",
@@ -129,53 +191,40 @@ actor MessagesStore {
               let path = row.string("filename")
         else { throw ApiError.notFound("Attachment not found.") }
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        let name = row.string("transfer_name") ?? url.lastPathComponent
-        let data: Data
-        if ["heic", "heif"].contains(url.pathExtension.lowercased()) {
-            guard let converted = ImageConversion.jpeg(from: url, cacheKey: id) else {
-                throw ApiError.notFound("This photo hasn't finished downloading on the Mac yet.")
-            }
-            data = converted
-        } else {
-            guard let contents = try? Data(contentsOf: url) else {
-                throw ApiError.notFound("This attachment hasn't finished downloading on the Mac yet.")
-            }
-            data = contents
-        }
-        let attachment = Attachment(
-            id: id,
-            mimeType: Self.mimeType(declared: row.string("mime_type"), fileName: url.lastPathComponent),
-            fileName: name,
-            byteSize: data.count,
-            width: nil,
-            height: nil,
-            url: "/v1/attachments/\(id)"
+        return AttachmentFile(
+            url: url,
+            fileName: row.string("transfer_name") ?? url.lastPathComponent,
+            declaredMimeType: row.string("mime_type")
         )
-        return (attachment, data)
     }
 
     func sendTarget(_ conversationId: String) throws -> SendTarget {
-        guard let chatId = Int64(conversationId) else { throw ApiError.notFound("Conversation not found.") }
-        let chat = try chatRow(chatId)
+        let chat = try primaryChat(Self.chatIds(conversationId))
         guard let guid = chat.string("guid") else { throw ApiError.notFound("Conversation not found.") }
-        return SendTarget(chatId: chatId, guid: guid, handle: chat.int("style") == 45 ? chat.string("identifier") : nil)
+        return SendTarget(
+            conversationId: conversationId,
+            guid: guid,
+            handle: chat.int("style") == 45 ? chat.string("identifier") : nil
+        )
     }
 
-    func directChat(with handle: String) throws -> Int64? {
+    func directConversation(with handle: String) throws -> String? {
         let key = normalizeHandle(handle)
-        let rows = try connection().query("""
-            SELECT c.ROWID AS rowid, c.chat_identifier AS identifier FROM chat c WHERE c.style = 45
-            ORDER BY (SELECT MAX(message_date) FROM chat_message_join WHERE chat_id = c.ROWID) DESC
-            """)
-        let match = rows.first(where: { $0.string("identifier").map(normalizeHandle) == key })
-        return match?.int("rowid")
+        let rows = try connection().query(
+            "SELECT ROWID AS rowid, chat_identifier AS identifier FROM chat WHERE style = 45"
+        )
+        guard let match = rows.first(where: { $0.string("identifier").map(normalizeHandle) == key }),
+              let chatId = match.int("rowid")
+        else { return nil }
+        chatGroups.removeAll()
+        return Self.conversationId(try group(for: chatId))
     }
 
-    func placeholder(chatId: Int64, clientId: String, text: String?) throws -> Message {
-        let chat = try chatRow(chatId)
+    func placeholder(conversationId: String, clientId: String, text: String?) throws -> Message {
+        let chat = try primaryChat(Self.chatIds(conversationId))
         return Message(
             id: "pending-\(clientId)",
-            conversationId: String(chatId),
+            conversationId: conversationId,
             sender: nil,
             isFromMe: true,
             text: text,
@@ -192,14 +241,14 @@ actor MessagesStore {
     }
 
     // registered before handing off to Messages so the watcher can't see the row first
-    func expectSend(chatId: Int64, clientId: String, text: String?) throws -> Message {
-        let message = try placeholder(chatId: chatId, clientId: clientId, text: text)
-        pending[chatId, default: []].append(Pending(clientId: clientId, text: text, message: message, createdAt: Date()))
+    func expectSend(conversationId: String, clientId: String, text: String?) throws -> Message {
+        let message = try placeholder(conversationId: conversationId, clientId: clientId, text: text)
+        pending[conversationId, default: []].append(Pending(clientId: clientId, text: text, message: message, createdAt: Date()))
         return message
     }
 
-    func cancelSend(chatId: Int64, clientId: String) {
-        pending[chatId]?.removeAll { $0.clientId == clientId }
+    func cancelSend(conversationId: String, clientId: String) {
+        pending[conversationId]?.removeAll { $0.clientId == clientId }
     }
 
     func poll() throws -> [BridgeEvent] {
@@ -222,28 +271,29 @@ actor MessagesStore {
             [.int(last)]
         )
         var newest = last
-        var touchedChats: [Int64] = []
+        var touched: [[Int64]] = []
         var reactionTargets: [String] = []
         for row in rows {
             guard let rowid = row.int("rowid"), let chatId = row.int("chat_id") else { continue }
             newest = max(newest, rowid)
+            let ids = try group(for: chatId)
             let type = row.int("associated_type") ?? 0
             if (2000...3005).contains(type), let target = row.string("associated_guid") {
                 let guid = Self.targetGuid(target)
                 if !reactionTargets.contains(guid) { reactionTargets.append(guid) }
             } else if type == 0, row.int("item_type") == 0 {
-                let chat = try chatRow(chatId)
-                guard var message = try build([row], chatId: chatId, chatService: Self.service(chat.string("service"))).first else {
+                let primary = try primaryChat(ids)
+                guard var message = try build([row], chatIds: ids, chatService: Self.service(primary.string("service"))).first else {
                     continue
                 }
                 if message.isFromMe {
-                    message.clientId = claimPending(chatId: chatId, text: message.text)
+                    message.clientId = claimPending(conversationId: message.conversationId, text: message.text)
                 }
                 events.append(.messageCreated(message))
             } else {
                 continue
             }
-            if !touchedChats.contains(chatId) { touchedChats.append(chatId) }
+            if !touched.contains(ids) { touched.append(ids) }
         }
         lastRowID = newest
 
@@ -259,33 +309,33 @@ actor MessagesStore {
         outgoingSignatures = signatures
 
         events += expirePending()
-        for chatId in touchedChats {
-            let updated = try conversation(chatId)
+        for ids in touched {
+            let updated = try conversation(chatIds: ids)
             events.append(.conversationUpdated(updated))
         }
         return events
     }
 
-    private func claimPending(chatId: Int64, text: String?) -> String? {
-        guard var list = pending[chatId], !list.isEmpty else { return nil }
+    private func claimPending(conversationId: String, text: String?) -> String? {
+        guard var list = pending[conversationId], !list.isEmpty else { return nil }
         let exact = list.firstIndex(where: { $0.text == text })
         guard let index = exact ?? list.firstIndex(where: { ($0.text == nil) == (text == nil) }) else { return nil }
         let claimed = list.remove(at: index)
-        pending[chatId] = list.isEmpty ? nil : list
+        pending[conversationId] = list.isEmpty ? nil : list
         return claimed.clientId
     }
 
     private func expirePending() -> [BridgeEvent] {
         let cutoff = Date().addingTimeInterval(-Self.pendingTimeout)
         var events: [BridgeEvent] = []
-        for (chatId, list) in pending {
+        for (conversationId, list) in pending {
             for item in list where item.createdAt < cutoff {
                 var failed = item.message
                 failed.status = .failed
                 events.append(.messageUpdated(failed))
             }
             let fresh = list.filter { $0.createdAt >= cutoff }
-            pending[chatId] = fresh.isEmpty ? nil : fresh
+            pending[conversationId] = fresh.isEmpty ? nil : fresh
         }
         return events
     }
@@ -310,24 +360,31 @@ actor MessagesStore {
             "SELECT \(Self.messageColumns) FROM message m JOIN chat_message_join cmj ON cmj.message_id = m.ROWID WHERE m.guid = ?",
             [.text(guid)]
         ).first, let chatId = row.int("chat_id") else { return nil }
-        let chat = try chatRow(chatId)
-        return try build([row], chatId: chatId, chatService: Self.service(chat.string("service"))).first
+        let ids = try group(for: chatId)
+        let primary = try primaryChat(ids)
+        return try build([row], chatIds: ids, chatService: Self.service(primary.string("service"))).first
     }
 
-    private func chatRow(_ chatId: Int64) throws -> SQLiteRow {
+    // the chat with the newest message decides the service and where sends go
+    private func primaryChat(_ chatIds: [Int64]) throws -> SQLiteRow {
+        let newest = try connection().query(
+            "SELECT chat_id AS chat_id FROM chat_message_join WHERE chat_id IN (\(Self.placeholders(chatIds.count))) ORDER BY message_date DESC LIMIT 1",
+            chatIds.map { SQLiteValue.int($0) }
+        ).first?.int("chat_id") ?? chatIds[0]
         guard let row = try connection().query("""
             SELECT ROWID AS rowid, guid AS guid, chat_identifier AS identifier, service_name AS service, \
             display_name AS display_name, style AS style FROM chat WHERE ROWID = ?
-            """, [.int(chatId)]).first
+            """, [.int(newest)]).first
         else { throw ApiError.notFound("Conversation not found.") }
         return row
     }
 
-    private func build(_ rows: [SQLiteRow], chatId: Int64, chatService: Service?) throws -> [Message] {
+    private func build(_ rows: [SQLiteRow], chatIds: [Int64], chatService: Service?) throws -> [Message] {
+        let conversationId = Self.conversationId(chatIds)
         let withFiles = rows.filter { $0.int("has_attachments") == 1 }.compactMap { $0.int("rowid") }
         let files = try attachments(for: withFiles)
         let oldest = rows.compactMap { $0.int("date") }.min() ?? 0
-        let tapbacks = try reactions(chatId: chatId, since: oldest, targets: Set(rows.compactMap { $0.string("guid") }))
+        let tapbacks = try reactions(chatIds: chatIds, since: oldest, targets: Set(rows.compactMap { $0.string("guid") }))
         return try rows.compactMap { row -> Message? in
             guard let rowid = row.int("rowid"), let guid = row.string("guid") else { return nil }
             let fromMe = row.int("is_from_me") == 1
@@ -337,7 +394,7 @@ actor MessagesStore {
             let sender = try fromMe ? nil : participant(row.int("handle_id") ?? 0)
             return Message(
                 id: guid,
-                conversationId: String(chatId),
+                conversationId: conversationId,
                 sender: sender,
                 isFromMe: fromMe,
                 text: text,
@@ -371,12 +428,11 @@ actor MessagesStore {
 
     private func attachments(for rowids: [Int64]) throws -> [Int64: [Attachment]] {
         guard !rowids.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: rowids.count).joined(separator: ",")
         let rows = try connection().query("""
             SELECT maj.message_id AS message_id, a.ROWID AS rowid, a.filename AS filename, a.mime_type AS mime_type, \
             a.transfer_name AS transfer_name, a.total_bytes AS total_bytes
             FROM message_attachment_join maj JOIN attachment a ON a.ROWID = maj.attachment_id
-            WHERE maj.message_id IN (\(placeholders))
+            WHERE maj.message_id IN (\(Self.placeholders(rowids.count)))
             """, rowids.map { SQLiteValue.int($0) })
         var result: [Int64: [Attachment]] = [:]
         for row in rows {
@@ -386,7 +442,7 @@ actor MessagesStore {
             if name.hasSuffix(".pluginPayloadAttachment") { continue }
             result[messageId, default: []].append(Attachment(
                 id: String(rowid),
-                mimeType: Self.mimeType(declared: row.string("mime_type"), fileName: fileName ?? name),
+                mimeType: MediaConversion.servedMimeType(declared: row.string("mime_type"), fileName: fileName ?? name),
                 fileName: name,
                 byteSize: Int(row.int("total_bytes") ?? 0),
                 width: nil,
@@ -398,15 +454,16 @@ actor MessagesStore {
     }
 
     // tapbacks are their own rows pointing at a target; replaying them in order leaves each person's current one
-    private func reactions(chatId: Int64, since date: Int64, targets: Set<String>) throws -> [String: [Reaction]] {
+    private func reactions(chatIds: [Int64], since date: Int64, targets: Set<String>) throws -> [String: [Reaction]] {
         guard !targets.isEmpty else { return [:] }
         let rows = try connection().query("""
             SELECT m.associated_message_guid AS target, m.associated_message_type AS type, m.is_from_me AS is_from_me, \
             m.handle_id AS handle_id, m.date AS date
             FROM chat_message_join cmj JOIN message m ON m.ROWID = cmj.message_id
-            WHERE cmj.chat_id = ? AND m.associated_message_type BETWEEN 2000 AND 3005 AND m.date >= ?
+            WHERE cmj.chat_id IN (\(Self.placeholders(chatIds.count))) AND m.associated_message_type BETWEEN 2000 AND 3005 \
+            AND m.date >= ?
             ORDER BY m.date ASC
-            """, [.int(chatId), .int(date)])
+            """, chatIds.map { SQLiteValue.int($0) } + [.int(date)])
         var state: [String: [String: Reaction]] = [:]
         for row in rows {
             guard let raw = row.string("target"), let type = row.int("type") else { continue }
@@ -464,13 +521,6 @@ actor MessagesStore {
         if let slash = raw.lastIndex(of: "/") { return String(raw[raw.index(after: slash)...]) }
         if raw.hasPrefix("bp:") { return String(raw.dropFirst(3)) }
         return raw
-    }
-
-    private static func mimeType(declared: String?, fileName: String) -> String {
-        let ext = (fileName as NSString).pathExtension.lowercased()
-        if ["heic", "heif"].contains(ext) { return "image/jpeg" }
-        if let declared, !declared.isEmpty { return declared }
-        return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
     }
 
     private static func messageText(_ row: SQLiteRow) -> String? {

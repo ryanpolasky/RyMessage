@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionStatus } from "../api/bridge";
 import type { Conversation } from "../api/types";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
@@ -13,6 +13,7 @@ interface SidebarProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onTogglePin: (id: string, currentlyPinned: boolean) => void;
+  onDelete: (id: string) => void;
   status: ConnectionStatus;
   connectionLabel: string;
   disconnectLabel: string;
@@ -41,7 +42,10 @@ function preview(conversation: Conversation): string {
   if (last.text) return last.text;
   if (last.attachments.length > 0) {
     const att = last.attachments[0];
-    return att.mimeType.startsWith("image/") ? "Image" : att.fileName;
+    if (att.mimeType.startsWith("image/")) return "Image";
+    if (att.mimeType.startsWith("video/")) return "Video";
+    if (att.mimeType.startsWith("audio/")) return "Audio Message";
+    return att.fileName;
   }
   return "";
 }
@@ -61,6 +65,7 @@ export function Sidebar({
   selectedId,
   onSelect,
   onTogglePin,
+  onDelete,
   status,
   connectionLabel,
   disconnectLabel,
@@ -72,6 +77,16 @@ export function Sidebar({
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Conversation | null>(null);
+
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConfirmDelete(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmDelete]);
 
   function openMenu(e: React.MouseEvent, conversation: Conversation) {
     e.preventDefault();
@@ -246,6 +261,41 @@ export function Sidebar({
             >
               {menu.conversation.pinned ? "Unpin" : "Pin"}
             </button>
+            <div className="context-separator" />
+            <button
+              className="context-item"
+              onClick={() => {
+                setConfirmDelete(menu.conversation);
+                setMenu(null);
+              }}
+            >
+              Delete Conversation…
+            </button>
+          </div>
+        </div>
+      )}
+      {confirmDelete && (
+        <div className="alert-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setConfirmDelete(null)}>
+          <div className="alert" role="alertdialog" aria-labelledby="delete-title">
+            <h2 id="delete-title">Delete this conversation?</h2>
+            <p>
+              It's removed from RyMessage on this PC. Your Mac and iPhone keep it, and it comes back here if a new
+              message arrives.
+            </p>
+            <div className="alert-actions">
+              <button className="settings-button" autoFocus onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button
+                className="settings-button alert-destructive"
+                onClick={() => {
+                  onDelete(confirmDelete.id);
+                  setConfirmDelete(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -31,11 +31,18 @@ function gapMs(a: Message, b: Message): number {
   return new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime();
 }
 
+function isVisualMedia(attachment: Attachment): boolean {
+  return attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("video/");
+}
+
 function quoteText(message: Message): string {
   if (message.text) return message.text;
   const att = message.attachments[0];
   if (!att) return "";
-  return att.mimeType.startsWith("image/") ? "Image" : att.fileName;
+  if (att.mimeType.startsWith("image/")) return "Image";
+  if (att.mimeType.startsWith("video/")) return "Video";
+  if (att.mimeType.startsWith("audio/")) return "Audio Message";
+  return att.fileName;
 }
 
 export function MessageList({
@@ -178,10 +185,9 @@ export function MessageList({
           const showAvatar = conversation.isGroup && !message.isFromMe && lastInGroup;
 
           const isNew = !initialIds.has(message.id);
-          const mediaOnly =
-            !message.text &&
-            message.attachments.length > 0 &&
-            message.attachments.every((a) => a.mimeType.startsWith("image/"));
+          const media = message.attachments.filter(isVisualMedia);
+          const files = message.attachments.filter((a) => !isVisualMedia(a));
+          const parts: (Attachment | null)[] = [...media, ...(message.text || files.length ? [null] : [])];
           const original = message.replyTo != null ? byId.get(message.replyTo) : undefined;
           const quoteFromMe = original ? original.isFromMe : message.isFromMe;
 
@@ -219,38 +225,51 @@ export function MessageList({
                   </button>
                 </div>
               )}
-              <div
-                className={[
-                  "bubble-row",
-                  message.isFromMe ? "from-me" : "from-them",
-                  message.isFromMe && message.service === "SMS" ? "sms" : "",
-                  lastInGroup ? "last-in-group" : "",
-                  conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
-                  message.reactions.length > 0 ? "has-reactions" : "",
-                ].join(" ")}
-              >
-                {showAvatar && message.sender && (
-                  <div className="bubble-avatar">
-                    <Avatar participant={message.sender} size={24} />
+              {parts.map((part, index) => {
+                const last = index === parts.length - 1;
+                return (
+                  <div
+                    key={part ? `media-${index}` : "text"}
+                    className={[
+                      "bubble-row",
+                      message.isFromMe ? "from-me" : "from-them",
+                      message.isFromMe && message.service === "SMS" ? "sms" : "",
+                      last && lastInGroup ? "last-in-group" : "",
+                      conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
+                      last && message.reactions.length > 0 ? "has-reactions" : "",
+                      last ? "" : "part-of-message",
+                    ].join(" ")}
+                  >
+                    {last && showAvatar && message.sender && (
+                      <div className="bubble-avatar">
+                        <Avatar participant={message.sender} size={24} />
+                      </div>
+                    )}
+                    <div
+                      data-message-id={index === 0 ? message.id : undefined}
+                      className={[
+                        "bubble",
+                        isNew ? "bubble-new" : "",
+                        part ? "bubble-media" : "",
+                        menu?.message.id === message.id ? "bubble-active" : "",
+                      ].join(" ")}
+                      onContextMenu={(e) => openMenu(e, message)}
+                    >
+                      {part ? (
+                        <AttachmentView attachment={part} loadAttachment={loadAttachment} />
+                      ) : (
+                        <>
+                          {files.map((att, fileIndex) => (
+                            <AttachmentView key={fileIndex} attachment={att} loadAttachment={loadAttachment} />
+                          ))}
+                          {message.text && <span className="bubble-text">{message.text}</span>}
+                        </>
+                      )}
+                      {last && <ReactionBadges reactions={message.reactions} />}
+                    </div>
                   </div>
-                )}
-                <div
-                  data-message-id={message.id}
-                  className={[
-                    "bubble",
-                    isNew ? "bubble-new" : "",
-                    mediaOnly ? "bubble-media" : "",
-                    menu?.message.id === message.id ? "bubble-active" : "",
-                  ].join(" ")}
-                  onContextMenu={(e) => openMenu(e, message)}
-                >
-                  {message.attachments.map((att, index) => (
-                    <AttachmentView key={index} attachment={att} loadAttachment={loadAttachment} />
-                  ))}
-                  {message.text && <span className="bubble-text">{message.text}</span>}
-                  <ReactionBadges reactions={message.reactions} />
-                </div>
-              </div>
+                );
+              })}
               {message.isFromMe && message.status === "sending" && (
                 <div className="message-status">Sending...</div>
               )}

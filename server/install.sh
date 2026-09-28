@@ -57,8 +57,46 @@ launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 # overwriting in place keeps the old signature cached for that file and macOS kills the new binary, so replace the file instead
 rm -f "$BINARY"
 cp "$BUILT" "$BINARY"
-"$BINARY" --pairing-code >/dev/null
 note "$BINARY"
+
+# macOS ties permissions to the signature; a fixed local certificate keeps them across rebuilds
+SIGNING_IDENTITY="RyMessage Local Signing"
+create_signing_identity() {
+  local dir result
+  dir="$(mktemp -d)"
+  cat > "$dir/cert.conf" <<CONF
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = $SIGNING_IDENTITY
+[ext]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+CONF
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "$dir/cert.conf" \
+      -keyout "$dir/key.pem" -out "$dir/cert.pem" >/dev/null 2>&1 &&
+    /usr/bin/openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" -name "$SIGNING_IDENTITY" \
+      -out "$dir/identity.p12" -passout pass:rymessage >/dev/null 2>&1 &&
+    security import "$dir/identity.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P rymessage \
+      -T /usr/bin/codesign >/dev/null 2>&1
+  result=$?
+  rm -rf "$dir"
+  return $result
+}
+if ! security find-certificate -c "$SIGNING_IDENTITY" >/dev/null 2>&1; then
+  note "Creating a local signing certificate so permissions survive future updates."
+  note "If macOS asks to let codesign use it, enter your password and click Always Allow."
+  create_signing_identity || true
+fi
+if codesign --force --sign "$SIGNING_IDENTITY" --identifier app.rymessage.server "$BINARY" >/dev/null 2>&1; then
+  note "Signed with your local certificate."
+else
+  note "Couldn't sign with a local certificate, so macOS will ask for permissions again after updates."
+fi
+"$BINARY" --pairing-code >/dev/null
 
 port_in_use() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1; }
 port_owner() {

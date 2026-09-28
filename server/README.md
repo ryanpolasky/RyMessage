@@ -26,7 +26,7 @@ The script:
 
 Everything can be done over Screen Sharing.
 
-**Updating:** `git pull`, then `./install.sh` again. A rebuilt server is a new binary to macOS, so if the script asks for Full Disk Access again, remove the old entry with the minus button and add it back.
+**Updating:** `git pull`, then `./install.sh` again. The script signs the server with a local certificate it creates in your login keychain ("RyMessage Local Signing"), so macOS keeps Full Disk Access and Automation across updates. If signing ever fails, the script asks for the permissions again.
 
 **Removing:** `./uninstall.sh`.
 
@@ -111,9 +111,9 @@ If cloudflared runs in Docker on the Mac itself, use `http://host.docker.interna
 
 | Feature | How |
 | --- | --- |
-| Conversations, messages, received tapbacks and replies | Read from `~/Library/Messages/chat.db` |
+| Conversations, messages, received tapbacks and replies | Read from `~/Library/Messages/chat.db`. A contact's separate iMessage and SMS chats are merged into one conversation, and sends go to whichever was used most recently |
 | Live updates | chat.db is checked every second for new messages, tapbacks, and delivery or read changes |
-| Photos and files | Served from `~/Library/Messages/Attachments`. HEIC photos are converted to JPEG and cached in `~/Library/Caches/RyMessage` |
+| Photos, videos, voice messages, files | Served from `~/Library/Messages/Attachments`. HEIC photos become JPEG, `.mov` videos become H.264 MP4, and `.caf` voice messages become M4A, cached in `~/Library/Caches/RyMessage` |
 | Sending text and files, starting one-on-one chats | AppleScript automation of Messages.app. Files are staged in `~/Pictures/RyMessage` first, because Messages only picks up files from your home folders |
 | Contact names and photos | Read from the Contacts database, which Full Disk Access already covers |
 

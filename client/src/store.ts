@@ -3,13 +3,23 @@ import type { ConnectionStatus, RyMessageBridge } from "./api/bridge";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "./api/types";
 
 const PINS_KEY = "rymessage.pins";
+const READ_KEY = "rymessage.readThrough";
+const HIDDEN_KEY = "rymessage.hidden";
 
-function loadPinOverrides(): Record<string, boolean> {
+function loadRecord<T>(key: string): Record<string, T> {
   try {
-    return JSON.parse(localStorage.getItem(PINS_KEY) ?? "{}");
+    return JSON.parse(localStorage.getItem(key) ?? "{}");
   } catch {
     return {};
   }
+}
+
+function usePersistedRecord<T>(key: string) {
+  const [record, setRecord] = useState<Record<string, T>>(() => loadRecord<T>(key));
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(record));
+  }, [key, record]);
+  return [record, setRecord] as const;
 }
 
 function errorMessage(e: unknown): string {
@@ -66,7 +76,9 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   const [messageErrors, setMessageErrors] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
-  const [pinOverrides, setPinOverrides] = useState<Record<string, boolean>>(loadPinOverrides);
+  const [pinOverrides, setPinOverrides] = usePersistedRecord<boolean>(PINS_KEY);
+  const [readThrough, setReadThrough] = usePersistedRecord<string>(READ_KEY);
+  const [hiddenThrough, setHiddenThrough] = usePersistedRecord<string>(HIDDEN_KEY);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const capabilitiesRef = useRef(capabilities);
@@ -75,10 +87,6 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   conversationsRef.current = conversations;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-
-  useEffect(() => {
-    localStorage.setItem(PINS_KEY, JSON.stringify(pinOverrides));
-  }, [pinOverrides]);
 
   const loadConversations = useCallback(() => {
     setLoadError(null);
@@ -111,7 +119,13 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   );
 
   const markRead = useCallback(
-    (id: string) => {
+    (id: string, through?: string) => {
+      const until = through ?? conversationsRef.current?.find((c) => c.id === id)?.lastMessage?.sentAt;
+      if (until) {
+        setReadThrough((prev) =>
+          prev[id] && Date.parse(prev[id]) >= Date.parse(until) ? prev : { ...prev, [id]: until }
+        );
+      }
       if (!capabilitiesRef.current?.markRead) return;
       setConversations((prev) => prev && prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c)));
       bridge.markRead(id).catch((e) => console.warn("Failed to mark conversation read", e));
@@ -166,7 +180,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
         !event.message.isFromMe &&
         event.message.conversationId === selectedIdRef.current
       ) {
-        markRead(event.message.conversationId);
+        markRead(event.message.conversationId, event.message.sentAt);
       }
     });
     return () => {
@@ -284,20 +298,36 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     if (selectedIdRef.current) loadMessages(selectedIdRef.current);
   }, [loadMessages]);
 
-  const togglePin = useCallback((conversationId: string, currentlyPinned: boolean) => {
-    setPinOverrides((prev) => ({ ...prev, [conversationId]: !currentlyPinned }));
-  }, []);
-
-  // macOS doesn't expose pins, so they're local only
-  const effectiveConversations = useMemo(
-    () =>
-      sortConversations(
-        (conversations ?? []).map((c) =>
-          pinOverrides[c.id] !== undefined ? { ...c, pinned: pinOverrides[c.id] } : c
-        )
-      ),
-    [conversations, pinOverrides]
+  const togglePin = useCallback(
+    (conversationId: string, currentlyPinned: boolean) => {
+      setPinOverrides((prev) => ({ ...prev, [conversationId]: !currentlyPinned }));
+    },
+    [setPinOverrides]
   );
+
+  const hideConversation = useCallback(
+    (conversationId: string) => {
+      const last = conversationsRef.current?.find((c) => c.id === conversationId)?.lastMessage;
+      setHiddenThrough((prev) => ({ ...prev, [conversationId]: last?.sentAt ?? new Date().toISOString() }));
+      if (selectedIdRef.current === conversationId) setSelectedId(null);
+    },
+    [setHiddenThrough]
+  );
+
+  // pins, read state, and deletions can't be written back to Messages, so they're kept on this PC
+  const effectiveConversations = useMemo(() => {
+    const coveredBy = (mark: string | undefined, c: Conversation) =>
+      mark !== undefined && timeOf(c.lastMessage) <= Date.parse(mark);
+    return sortConversations(
+      (conversations ?? [])
+        .filter((c) => !coveredBy(hiddenThrough[c.id], c))
+        .map((c) => ({
+          ...c,
+          pinned: pinOverrides[c.id] ?? c.pinned,
+          unreadCount: coveredBy(readThrough[c.id], c) ? 0 : c.unreadCount,
+        }))
+    );
+  }, [conversations, pinOverrides, readThrough, hiddenThrough]);
 
   const selected = effectiveConversations.find((c) => c.id === selectedId) ?? null;
 
@@ -318,5 +348,6 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     startConversation,
     setReaction,
     togglePin,
+    hideConversation,
   };
 }

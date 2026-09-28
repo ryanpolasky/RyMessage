@@ -6,17 +6,24 @@ interface AttachmentViewProps {
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
 }
 
+type Kind = "image" | "video" | "audio" | "file";
+
+function kindOf(attachment: Attachment): Kind {
+  const [type] = attachment.mimeType.split("/");
+  return type === "image" || type === "video" || type === "audio" ? type : "file";
+}
+
 function isLocal(attachment: Attachment): boolean {
   return attachment.url.startsWith("blob:");
 }
 
 export function AttachmentView({ attachment, loadAttachment }: AttachmentViewProps) {
-  const isImage = attachment.mimeType.startsWith("image/");
+  const kind = kindOf(attachment);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!isImage) return;
+    if (kind === "file") return;
     setFailed(false);
     if (isLocal(attachment)) {
       setSrc(attachment.url);
@@ -36,7 +43,7 @@ export function AttachmentView({ attachment, loadAttachment }: AttachmentViewPro
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.url, isImage, loadAttachment]);
+  }, [attachment.url, kind, loadAttachment]);
 
   async function download() {
     setFailed(false);
@@ -54,7 +61,7 @@ export function AttachmentView({ attachment, loadAttachment }: AttachmentViewPro
     }
   }
 
-  if (!isImage || failed) {
+  if (kind === "file" || failed) {
     return (
       <button className={`bubble-file ${failed ? "failed" : ""}`} onClick={download}>
         {failed ? `${attachment.fileName} (unavailable)` : attachment.fileName}
@@ -62,8 +69,24 @@ export function AttachmentView({ attachment, loadAttachment }: AttachmentViewPro
     );
   }
   if (!src) {
-    const ratio = attachment.width && attachment.height ? attachment.width / attachment.height : 4 / 3;
-    return <div className="bubble-image-placeholder" style={{ aspectRatio: ratio }} />;
+    if (kind === "audio") return <div className="bubble-audio-placeholder" />;
+    const ratio = attachment.width && attachment.height ? attachment.width / attachment.height : kind === "video" ? 9 / 16 : 4 / 3;
+    return <div className={`bubble-image-placeholder ${kind === "video" ? "video" : ""}`} style={{ aspectRatio: ratio }} />;
+  }
+  if (kind === "video") {
+    return (
+      <video
+        className="bubble-video"
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  if (kind === "audio") {
+    return <audio className="bubble-audio" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
   }
   return <img className="bubble-image" src={src} alt={attachment.fileName} />;
 }

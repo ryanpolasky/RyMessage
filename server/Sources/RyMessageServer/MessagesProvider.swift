@@ -23,11 +23,13 @@ protocol MessagesProvider: Sendable {
 struct ChatDBProvider: MessagesProvider {
     private let contactsBook: ContactsBook
     private let store: MessagesStore
+    private let logger: Logger
 
-    init() {
+    init(logger: Logger) {
         let book = ContactsBook()
         contactsBook = book
         store = MessagesStore(contacts: book)
+        self.logger = logger
     }
 
     var capabilities: Capabilities {
@@ -60,11 +62,12 @@ struct ChatDBProvider: MessagesProvider {
             throw ApiError.notSupported("Replies need Apple's private API, which this server doesn't use.")
         }
         let target = try await store.sendTarget(conversationId)
-        let placeholder = try await store.expectSend(chatId: target.chatId, clientId: clientId, text: text)
+        let placeholder = try await store.expectSend(conversationId: target.conversationId, clientId: clientId, text: text)
         do {
             try await MessagesApp.send(text: text, chatGuid: target.guid, fallbackHandle: target.handle)
         } catch {
-            await store.cancelSend(chatId: target.chatId, clientId: clientId)
+            await store.cancelSend(conversationId: target.conversationId, clientId: clientId)
+            logger.warning("Sending through Messages failed: \(error)")
             throw ApiError.sendFailed("Messages couldn't send that: \(error)")
         }
         return placeholder
@@ -89,11 +92,12 @@ struct ChatDBProvider: MessagesProvider {
         let safeName = fileName.replacingOccurrences(of: "/", with: "_")
         let file = folder.appendingPathComponent("\(UUID().uuidString.prefix(8))-\(safeName)")
         try Data(data.readableBytesView).write(to: file)
-        let placeholder = try await store.expectSend(chatId: target.chatId, clientId: clientId, text: nil)
+        let placeholder = try await store.expectSend(conversationId: target.conversationId, clientId: clientId, text: nil)
         do {
             try await MessagesApp.send(file: file, chatGuid: target.guid)
         } catch {
-            await store.cancelSend(chatId: target.chatId, clientId: clientId)
+            await store.cancelSend(conversationId: target.conversationId, clientId: clientId)
+            logger.warning("Sending a file through Messages failed: \(error)")
             throw ApiError.sendFailed("Messages couldn't send that file: \(error)")
         }
         return placeholder
@@ -104,26 +108,43 @@ struct ChatDBProvider: MessagesProvider {
     }
 
     func attachmentData(id: String) async throws -> (Attachment, ByteBuffer) {
-        let (attachment, data) = try await store.attachmentData(id: id)
+        let file = try await store.attachmentFile(id: id)
+        guard FileManager.default.fileExists(atPath: file.url.path) else {
+            throw ApiError.notFound("This attachment hasn't finished downloading on the Mac yet.")
+        }
+        guard let data = await MediaConversion.servedData(for: file.url, cacheKey: id) else {
+            logger.warning("Couldn't convert attachment \(id) (\(file.url.pathExtension)) for the browser")
+            throw ApiError.notFound("This attachment couldn't be converted for playback.")
+        }
+        let attachment = Attachment(
+            id: id,
+            mimeType: MediaConversion.servedMimeType(declared: file.declaredMimeType, fileName: file.url.lastPathComponent),
+            fileName: file.fileName,
+            byteSize: data.count,
+            width: nil,
+            height: nil,
+            url: "/v1/attachments/\(id)"
+        )
         return (attachment, ByteBuffer(bytes: data))
     }
 
     func startConversation(clientId: String, to: [String], text: String) async throws -> (message: Message, created: Conversation?) {
         let handle = normalizeHandle(to[0])
-        if let chatId = try await store.directChat(with: handle) {
-            let message = try await sendMessage(conversationId: String(chatId), clientId: clientId, text: text, replyTo: nil)
+        if let existing = try await store.directConversation(with: handle) {
+            let message = try await sendMessage(conversationId: existing, clientId: clientId, text: text, replyTo: nil)
             return (message, nil)
         }
         do {
             try await MessagesApp.send(text: text, toHandle: handle)
         } catch {
+            logger.warning("Starting a conversation through Messages failed: \(error)")
             throw ApiError.sendFailed("Messages couldn't start a conversation with \(handle): \(error)")
         }
         for _ in 0..<20 {
             try await Task.sleep(nanoseconds: 500_000_000)
-            if let chatId = try await store.directChat(with: handle) {
-                let message = try await store.placeholder(chatId: chatId, clientId: clientId, text: text)
-                let conversation = try await store.conversation(chatId)
+            if let created = try await store.directConversation(with: handle) {
+                let message = try await store.placeholder(conversationId: created, clientId: clientId, text: text)
+                let conversation = try await store.conversation(id: created)
                 return (message, conversation)
             }
         }

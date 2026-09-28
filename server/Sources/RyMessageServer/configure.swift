@@ -31,7 +31,7 @@ func configure(_ app: Application) throws {
     app.middleware.use(RouteLoggingMiddleware(logLevel: .info))
     app.middleware.use(ApiErrorMiddleware())
 
-    let provider = ChatDBProvider()
+    let provider = ChatDBProvider(logger: app.logger)
     let hub = EventHub()
     try routes(app, provider: provider, hub: hub, token: config.token)
     provider.startWatching(hub: hub, logger: app.logger)

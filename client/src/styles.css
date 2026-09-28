@@ -850,6 +850,31 @@ body {
   background: var(--bubble-them);
 }
 
+.bubble-image-placeholder.video {
+  width: 200px;
+  max-height: 360px;
+}
+
+.bubble-video {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 420px;
+  border-radius: 15px;
+  background: #000000;
+}
+
+.from-me .bubble-media .bubble-video {
+  margin-left: auto;
+}
+
+.bubble-audio,
+.bubble-audio-placeholder {
+  display: block;
+  width: 260px;
+  max-width: 100%;
+  height: 36px;
+}
+
 .bubble-file {
   display: block;
   border: none;
@@ -1882,6 +1907,61 @@ body {
 .context-item:hover {
   background: var(--accent);
   color: #ffffff;
+}
+
+.context-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.alert-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  animation: backdrop-in 0.2s ease-out;
+}
+
+.alert {
+  width: 280px;
+  padding: 20px 18px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--sheet-bg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  text-align: center;
+  animation: sheet-in 0.3s var(--spring);
+}
+
+.alert h2 {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.alert p {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.alert-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.alert-actions .settings-button {
+  flex: 1;
+  padding: 5px 10px;
+}
+
+.settings-button.alert-destructive {
+  color: #ff453a;
 }
 
 @media (prefers-reduced-motion: reduce) {
