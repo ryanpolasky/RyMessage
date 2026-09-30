@@ -337,6 +337,15 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
 
   const selected = effectiveConversations.find((c) => c.id === selectedId) ?? null;
 
+  // a conversation that's open is always read through its newest message
+  useEffect(() => {
+    const last = selected?.lastMessage;
+    if (!selected || !last) return;
+    const mark = readThrough[selected.id];
+    if (mark !== undefined && Date.parse(mark) >= timeOf(last)) return;
+    markRead(selected.id, last.sentAt);
+  }, [selected, readThrough, markRead]);
+
   return {
     capabilities,
     conversations: effectiveConversations,
