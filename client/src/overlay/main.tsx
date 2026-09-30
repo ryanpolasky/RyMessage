@@ -7,6 +7,7 @@ import {
   fitOverlayWindow,
   isDesktop,
   notifyOverlayDismissed,
+  onOverlayClear,
   onOverlayNotice,
   requestOpenConversation,
 } from "../desktop";
@@ -34,6 +35,13 @@ function previewNotices(handler: (notice: OverlayNotice) => void): () => void {
   };
 }
 
+// lets the browser preview exercise the same clear path the desktop app uses
+function previewClear(handler: () => void): () => void {
+  const listener = () => handler();
+  window.addEventListener("rym-preview-clear", listener);
+  return () => window.removeEventListener("rym-preview-clear", listener);
+}
+
 function OverlayApp() {
   const [settings] = useSettings();
   const ttlMs = settings.dismissAfterSeconds === 0 ? null : settings.dismissAfterSeconds * 1000;
@@ -41,6 +49,7 @@ function OverlayApp() {
     return (
       <Overlay
         subscribe={previewNotices}
+        subscribeClear={previewClear}
         ttlMs={ttlMs}
         onOpen={() => {}}
         onUserDismiss={() => {}}
@@ -51,6 +60,7 @@ function OverlayApp() {
   return (
     <Overlay
       subscribe={onOverlayNotice}
+      subscribeClear={onOverlayClear}
       ttlMs={ttlMs}
       onOpen={(id) => {
         requestOpenConversation(id).catch((e) => console.warn("Failed to open conversation", e));

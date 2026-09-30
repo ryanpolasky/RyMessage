@@ -15,6 +15,7 @@ export const isDesktop = isTauri();
 const NOTICE_EVENT = "overlay-notice";
 const OPEN_EVENT = "overlay-open";
 const DISMISSED_EVENT = "overlay-dismissed";
+const CLEAR_EVENT = "overlay-clear";
 
 function unlistenLater(pending: Promise<() => void>): () => void {
   return () => {
@@ -36,6 +37,14 @@ export function notifyOverlayDismissed(): Promise<void> {
 
 export function onOverlayDismissed(handler: () => void): () => void {
   return unlistenLater(listen(DISMISSED_EVENT, handler));
+}
+
+export function requestOverlayClear(): Promise<void> {
+  return emitTo("overlay", CLEAR_EVENT);
+}
+
+export function onOverlayClear(handler: () => void): () => void {
+  return unlistenLater(listen(CLEAR_EVENT, handler));
 }
 
 export function requestOpenConversation(conversationId: string): Promise<void> {

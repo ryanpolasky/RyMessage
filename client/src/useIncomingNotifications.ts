@@ -2,7 +2,13 @@ import { useEffect, useRef } from "react";
 import type { RyMessageBridge } from "./api/bridge";
 import type { Conversation, Message } from "./api/types";
 import { withInlineAvatar } from "./avatars";
-import { isDesktop, onOpenConversation, onOverlayDismissed, sendOverlayNotice } from "./desktop";
+import {
+  isDesktop,
+  onOpenConversation,
+  onOverlayDismissed,
+  requestOverlayClear,
+  sendOverlayNotice,
+} from "./desktop";
 import type { Settings } from "./settings";
 import { playNotificationSound, stopNotificationSound } from "./sound";
 
@@ -23,22 +29,19 @@ function fallbackConversation(message: Message): Conversation | null {
 export function useIncomingNotifications(
   bridge: RyMessageBridge,
   conversations: Conversation[],
-  selectedId: string | null,
   settings: Settings,
   onOpen: (conversationId: string) => void
 ) {
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
     const offEvents = bridge.subscribe((event) => {
       if (event.type !== "messageCreated" || event.message.isFromMe) return;
+      if (document.hasFocus()) return;
       const message = event.message;
-      if (document.hasFocus() && selectedIdRef.current === message.conversationId) return;
       void playNotificationSound(settingsRef.current.sound);
       if (!isDesktop || !settingsRef.current.overlay) return;
       const conversation =
@@ -61,10 +64,18 @@ export function useIncomingNotifications(
         })
       : () => {};
     const offDismissed = isDesktop ? onOverlayDismissed(stopNotificationSound) : () => {};
+    const onFocus = () => {
+      stopNotificationSound();
+      if (isDesktop) {
+        requestOverlayClear().catch((e) => console.warn("Failed to clear notifications", e));
+      }
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       offEvents();
       offOpen();
       offDismissed();
+      window.removeEventListener("focus", onFocus);
     };
   }, [bridge, onOpen]);
 }

@@ -34,6 +34,7 @@ function cardKey(notice: OverlayNotice): string {
 
 interface OverlayProps {
   subscribe: (handler: (notice: OverlayNotice) => void) => () => void;
+  subscribeClear: (handler: () => void) => () => void;
   ttlMs: number | null;
   onOpen: (conversationId: string) => void;
   onUserDismiss: () => void;
@@ -174,7 +175,7 @@ function SwipeCard({ card, onOpen, onDismiss, children }: SwipeCardProps) {
   );
 }
 
-export function Overlay({ subscribe, ttlMs, onOpen, onUserDismiss, onResize }: OverlayProps) {
+export function Overlay({ subscribe, subscribeClear, ttlMs, onOpen, onUserDismiss, onResize }: OverlayProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const timers = useRef(new Map<string, number>());
   const hovered = useRef(false);
@@ -221,6 +222,15 @@ export function Overlay({ subscribe, ttlMs, onOpen, onUserDismiss, onResize }: O
       }),
     [subscribe, schedule]
   );
+
+  const dismissAll = useCallback(() => {
+    for (const timer of timers.current.values()) clearTimeout(timer);
+    timers.current.clear();
+    setCards((prev) => prev.map((c) => ({ ...c, leaving: true })));
+    setTimeout(() => setCards((prev) => prev.filter((c) => !c.leaving)), LEAVE_MS);
+  }, []);
+
+  useEffect(() => subscribeClear(dismissAll), [subscribeClear, dismissAll]);
 
   useLayoutEffect(() => {
     const root = rootRef.current!;

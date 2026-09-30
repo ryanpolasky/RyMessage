@@ -68,7 +68,6 @@ function Messenger({
   useIncomingNotifications(
     bridge,
     store.conversations,
-    store.selected?.id ?? null,
     settings,
     store.selectConversation
   );
