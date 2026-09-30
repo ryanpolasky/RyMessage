@@ -24,6 +24,7 @@ interface CodeAutocomplete {
 }
 
 const SHORTCODE_PATTERN = /(?:^|\s)(:[a-zA-Z0-9_+-]{2,})$/;
+const CLOSED_CODE_PATTERN = /(?:^|\s)(:([a-zA-Z0-9_+-]{2,}):)$/;
 
 export function Composer({
   conversationId,
@@ -79,7 +80,22 @@ export function Composer({
 
   function updateAutocomplete(value: string, caret: number) {
     const index = emojiIndexRef.current;
-    const match = index && SHORTCODE_PATTERN.exec(value.slice(0, caret));
+    const before = value.slice(0, caret);
+    const closed = index && CLOSED_CODE_PATTERN.exec(before);
+    if (closed) {
+      const option = index.exactCode(closed[2]);
+      if (option) {
+        const start = caret - closed[1].length;
+        applyText(
+          value.slice(0, start) + option.char + value.slice(caret),
+          start + option.char.length
+        );
+        return;
+      }
+      if (ac) setAc(null);
+      return;
+    }
+    const match = index && SHORTCODE_PATTERN.exec(before);
     if (!match) {
       if (ac) setAc(null);
       return;

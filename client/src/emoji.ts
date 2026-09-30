@@ -22,6 +22,7 @@ export interface EmojiSection {
 
 export interface EmojiIndex {
   sections: EmojiSection[];
+  exactCode(code: string): EmojiOption | undefined;
   search(query: string): EmojiOption[];
   searchCodes(query: string, limit: number): CodeMatch[];
 }
@@ -83,6 +84,12 @@ async function buildIndex(): Promise<EmojiIndex> {
     skins: (e.skins ?? []).map((s) => s.emoji),
   });
   const options = emojis.map(toOption);
+  const byCode = new Map<string, EmojiOption>();
+  for (const option of options) {
+    for (const code of option.codes) {
+      if (!byCode.has(code)) byCode.set(code, option);
+    }
+  }
   const groups = [...messages.default.groups]
     .sort((a, b) => a.order - b.order)
     .filter((g) => g.key !== "component");
@@ -137,7 +144,9 @@ async function buildIndex(): Promise<EmojiIndex> {
       .map((h) => h.match);
   }
 
-  return { sections, search, searchCodes };
+  const exactCode = (code: string) => byCode.get(code.toLowerCase());
+
+  return { sections, exactCode, search, searchCodes };
 }
 
 function titleCase(text: string): string {
