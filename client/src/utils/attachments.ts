@@ -13,7 +13,7 @@ export function attachmentPreview(attachment: Attachment): string {
 
 export function unsentNote(message: Message): string {
   if (message.isFromMe) return "You unsent a message";
-  const name = message.sender?.displayName?.split(" ")[0] ?? message.sender?.handle;
+  const name = message.sender?.displayName ?? message.sender?.handle;
   return name ? `${name} unsent a message` : "A message was unsent";
 }
 
