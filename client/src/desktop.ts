@@ -16,6 +16,7 @@ const NOTICE_EVENT = "overlay-notice";
 const OPEN_EVENT = "overlay-open";
 const DISMISSED_EVENT = "overlay-dismissed";
 const CLEAR_EVENT = "overlay-clear";
+const UPDATE_EVENT = "overlay-update";
 
 function unlistenLater(pending: Promise<() => void>): () => void {
   return () => {
@@ -45,6 +46,14 @@ export function requestOverlayClear(): Promise<void> {
 
 export function onOverlayClear(handler: () => void): () => void {
   return unlistenLater(listen(CLEAR_EVENT, handler));
+}
+
+export function sendOverlayUpdate(message: Message): Promise<void> {
+  return emitTo("overlay", UPDATE_EVENT, message);
+}
+
+export function onOverlayUpdate(handler: (message: Message) => void): () => void {
+  return unlistenLater(listen<Message>(UPDATE_EVENT, (e) => handler(e.payload)));
 }
 
 export function requestOpenConversation(conversationId: string): Promise<void> {

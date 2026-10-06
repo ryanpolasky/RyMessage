@@ -61,6 +61,7 @@ export interface Message {
   reactions: Reaction[];
   replyTo: string | null;
   editedAt?: string | null;
+  unsent?: boolean | null;
 }
 
 export type TapbackKind = "love" | "like" | "dislike" | "laugh" | "emphasize" | "question";

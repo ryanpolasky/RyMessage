@@ -261,13 +261,14 @@ const replies: Record<string, string[]> = {
   "c-casey": ["perfect", "salsa too if you can", "see you then"],
 };
 
-const ambient: { conversationId: string; from: Participant; text: string; editTo?: string }[] = [
+const ambient: { conversationId: string; from: Participant; text: string; editTo?: string; unsend?: boolean }[] = [
   {
     conversationId: "c-alex",
     from: alex,
     text: "yo are you wathcing this",
     editTo: "yo are you watching this",
   },
+  { conversationId: "c-group", from: sam, text: "wait wrong chat lol", unsend: true },
   {
     conversationId: "c-46001",
     from: shortCode,
@@ -470,7 +471,7 @@ export class MockBridge implements RyMessageBridge {
   private scheduleAmbient() {
     const [min, max] = this.ambientDelayMs;
     this.ambientTimer = window.setTimeout(() => {
-      const { conversationId, from, text, editTo } = ambient[ambientIndex % ambient.length];
+      const { conversationId, from, text, editTo, unsend } = ambient[ambientIndex % ambient.length];
       ambientIndex += 1;
       messageCounter += 1;
       const message: Message = {
@@ -494,10 +495,15 @@ export class MockBridge implements RyMessageBridge {
       if (convo) convo.unreadCount += 1;
       this.emit({ type: "messageCreated", message: { ...message } });
       this.touchConversation(conversationId, message);
-      if (editTo) {
+      if (editTo || unsend) {
         setTimeout(() => {
-          message.text = editTo;
-          message.editedAt = new Date().toISOString();
+          if (unsend) {
+            message.text = null;
+            message.unsent = true;
+          } else {
+            message.text = editTo!;
+            message.editedAt = new Date().toISOString();
+          }
           this.emit({ type: "messageUpdated", message: { ...message } });
         }, 3000);
       }

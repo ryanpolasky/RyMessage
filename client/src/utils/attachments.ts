@@ -1,4 +1,4 @@
-import type { Attachment } from "../api/types";
+import type { Attachment, Message } from "../api/types";
 
 export function attachmentLabel(attachment: Attachment): string {
   if (attachment.mimeType.startsWith("image/")) return "Image";
@@ -9,4 +9,16 @@ export function attachmentLabel(attachment: Attachment): string {
 
 export function attachmentPreview(attachment: Attachment): string {
   return attachment.mimeType.startsWith("audio/") ? "Sent an audio message" : attachmentLabel(attachment);
+}
+
+export function unsentNote(message: Message): string {
+  if (message.isFromMe) return "You unsent a message";
+  const name = message.sender?.displayName?.split(" ")[0] ?? message.sender?.handle;
+  return name ? `${name} unsent a message` : "A message was unsent";
+}
+
+export function messagePreview(message: Message): string {
+  if (message.unsent) return unsentNote(message);
+  if (message.text) return message.text;
+  return message.attachments[0] ? attachmentPreview(message.attachments[0]) : "";
 }

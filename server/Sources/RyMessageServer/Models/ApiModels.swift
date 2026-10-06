@@ -82,6 +82,7 @@ struct Message: Content {
     var reactions: [Reaction]
     var replyTo: String?
     var editedAt: Date?
+    var unsent: Bool?
 }
 
 enum TapbackKind: String, Content {

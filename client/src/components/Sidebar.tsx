@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionStatus } from "../api/bridge";
 import type { Conversation } from "../api/types";
-import { attachmentPreview } from "../utils/attachments";
+import { messagePreview } from "../utils/attachments";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { sidebarTimestamp } from "../utils/time";
 import { Avatar, ConversationAvatar } from "./Avatar";
@@ -38,10 +38,7 @@ interface MenuState {
 }
 
 function preview(conversation: Conversation): string {
-  const last = conversation.lastMessage;
-  if (!last) return "";
-  if (last.text) return last.text;
-  return last.attachments[0] ? attachmentPreview(last.attachments[0]) : "";
+  return conversation.lastMessage ? messagePreview(conversation.lastMessage) : "";
 }
 
 function displayName(conversation: Conversation): string {

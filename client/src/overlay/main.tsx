@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MockBridge } from "../api/mockBridge";
-import type { Conversation } from "../api/types";
+import type { Conversation, Message } from "../api/types";
 import type { OverlayNotice } from "../desktop";
 import {
   fitOverlayWindow,
@@ -9,6 +9,7 @@ import {
   notifyOverlayDismissed,
   onOverlayClear,
   onOverlayNotice,
+  onOverlayUpdate,
   requestOpenConversation,
 } from "../desktop";
 import { useSettings } from "../settings";
@@ -16,11 +17,13 @@ import { OVERLAY_WIDTH, Overlay } from "./Overlay";
 import "../styles.css";
 import "./overlay.css";
 
+let previewBridge: MockBridge | null = null;
+
 function previewNotices(handler: (notice: OverlayNotice) => void): () => void {
-  const bridge = new MockBridge([2500, 4500]);
+  previewBridge ??= new MockBridge([2500, 4500]);
   let conversations: Conversation[] = [];
-  bridge.getConversations().then((list) => (conversations = list));
-  const off = bridge.subscribe((event) => {
+  previewBridge.getConversations().then((list) => (conversations = list));
+  return previewBridge.subscribe((event) => {
     if (event.type === "conversationUpdated") {
       conversations = conversations.map((c) => (c.id === event.conversation.id ? event.conversation : c));
       return;
@@ -29,10 +32,13 @@ function previewNotices(handler: (notice: OverlayNotice) => void): () => void {
     const conversation = conversations.find((c) => c.id === event.message.conversationId);
     if (conversation) handler({ conversation, message: event.message });
   });
-  return () => {
-    off();
-    bridge.close();
-  };
+}
+
+function previewUpdates(handler: (message: Message) => void): () => void {
+  previewBridge ??= new MockBridge([2500, 4500]);
+  return previewBridge.subscribe((event) => {
+    if (event.type === "messageUpdated" && (event.message.unsent || event.message.editedAt)) handler(event.message);
+  });
 }
 
 // lets the browser preview exercise the same clear path the desktop app uses
@@ -50,6 +56,7 @@ function OverlayApp() {
       <Overlay
         subscribe={previewNotices}
         subscribeClear={previewClear}
+        subscribeUpdate={previewUpdates}
         ttlMs={ttlMs}
         onOpen={() => {}}
         onUserDismiss={() => {}}
@@ -61,6 +68,7 @@ function OverlayApp() {
     <Overlay
       subscribe={onOverlayNotice}
       subscribeClear={onOverlayClear}
+      subscribeUpdate={onOverlayUpdate}
       ttlMs={ttlMs}
       onOpen={(id) => {
         requestOpenConversation(id).catch((e) => console.warn("Failed to open conversation", e));

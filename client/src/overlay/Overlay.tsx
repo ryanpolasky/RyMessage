@@ -4,7 +4,7 @@ import type { Conversation, Message } from "../api/types";
 import { Avatar } from "../components/Avatar";
 import type { OverlayNotice } from "../desktop";
 import { copyText } from "../desktop";
-import { attachmentPreview } from "../utils/attachments";
+import { messagePreview } from "../utils/attachments";
 import { findVerificationCode, formatVerificationCode } from "../utils/verificationCode";
 
 export const OVERLAY_WIDTH = 412;
@@ -36,6 +36,7 @@ function cardKey(notice: OverlayNotice): string {
 interface OverlayProps {
   subscribe: (handler: (notice: OverlayNotice) => void) => () => void;
   subscribeClear: (handler: () => void) => () => void;
+  subscribeUpdate: (handler: (message: Message) => void) => () => void;
   ttlMs: number | null;
   onOpen: (conversationId: string) => void;
   onUserDismiss: () => void;
@@ -43,8 +44,7 @@ interface OverlayProps {
 }
 
 function bubbleText(message: Message): string {
-  if (message.text) return message.text;
-  return message.attachments[0] ? attachmentPreview(message.attachments[0]) : "";
+  return messagePreview(message);
 }
 
 function cardLabel(card: Card): string {
@@ -174,8 +174,18 @@ function SwipeCard({ card, onOpen, onDismiss, children }: SwipeCardProps) {
   );
 }
 
-export function Overlay({ subscribe, subscribeClear, ttlMs, onOpen, onUserDismiss, onResize }: OverlayProps) {
+export function Overlay({
+  subscribe,
+  subscribeClear,
+  subscribeUpdate,
+  ttlMs,
+  onOpen,
+  onUserDismiss,
+  onResize,
+}: OverlayProps) {
   const [cards, setCards] = useState<Card[]>([]);
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
   const timers = useRef(new Map<string, number>());
   const hovered = useRef(false);
   const ttlRef = useRef(ttlMs);
@@ -230,6 +240,25 @@ export function Overlay({ subscribe, subscribeClear, ttlMs, onOpen, onUserDismis
   }, []);
 
   useEffect(() => subscribeClear(dismissAll), [subscribeClear, dismissAll]);
+
+  const applyUpdate = useCallback(
+    (message: Message) => {
+      const card = cardsRef.current.find((c) => !c.leaving && c.messages.some((m) => m.id === message.id));
+      if (!card) return;
+      const replace = (c: Card, messages: Message[]) => (c.key === card.key ? { ...c, messages } : c);
+      if (!message.unsent) {
+        setCards((prev) => prev.map((c) => replace(c, c.messages.map((m) => (m.id === message.id ? message : m)))));
+      } else if (card.messages.length === 1) {
+        setCards((prev) => prev.map((c) => replace(c, [message])));
+        dismiss(card.key);
+      } else {
+        setCards((prev) => prev.map((c) => replace(c, c.messages.filter((m) => m.id !== message.id))));
+      }
+    },
+    [dismiss]
+  );
+
+  useEffect(() => subscribeUpdate(applyUpdate), [subscribeUpdate, applyUpdate]);
 
   useLayoutEffect(() => {
     const root = rootRef.current!;

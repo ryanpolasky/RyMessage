@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
-import { attachmentLabel } from "../utils/attachments";
+import { attachmentLabel, unsentNote } from "../utils/attachments";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { separatorParts } from "../utils/time";
 import { AttachmentView } from "./AttachmentView";
@@ -69,6 +69,7 @@ function isVisualMedia(attachment: Attachment): boolean {
 }
 
 function quoteText(message: Message): string {
+  if (message.unsent) return unsentNote(message);
   if (message.text) return message.text;
   return message.attachments[0] ? attachmentLabel(message.attachments[0]) : "";
 }
@@ -96,6 +97,8 @@ export function MessageList({
       const prev = messages[i - 1];
       const continues =
         prev !== undefined &&
+        !m.unsent &&
+        !prev.unsent &&
         m.replyTo != null &&
         prev.replyTo === m.replyTo &&
         sameSender(prev, m) &&
@@ -231,7 +234,7 @@ export function MessageList({
 
   const lastDelivered = [...messages]
     .reverse()
-    .find((m) => m.isFromMe && (m.status === "delivered" || m.status === "read"));
+    .find((m) => m.isFromMe && !m.unsent && (m.status === "delivered" || m.status === "read"));
 
   return (
     <div
@@ -264,10 +267,28 @@ export function MessageList({
           const prev = i > 0 ? messages[i - 1] : null;
           const next = i < messages.length - 1 ? messages[i + 1] : null;
           const showSeparator = !prev || gapMs(prev, message) > SEPARATOR_GAP_MS;
+          if (message.unsent) {
+            return (
+              <div key={message.clientId ?? message.id}>
+                {showSeparator && (
+                  <div className="time-separator">
+                    <strong>{separatorParts(message.sentAt).day}</strong>{" "}
+                    {separatorParts(message.sentAt).time}
+                  </div>
+                )}
+                <div className="unsent-note">{unsentNote(message)}</div>
+              </div>
+            );
+          }
           const firstInGroup =
-            showSeparator || !prev || !sameSender(prev, message) || gapMs(prev, message) > GROUP_GAP_MS;
+            showSeparator ||
+            !prev ||
+            !!prev.unsent ||
+            !sameSender(prev, message) ||
+            gapMs(prev, message) > GROUP_GAP_MS;
           const lastInGroup =
             !next ||
+            !!next.unsent ||
             !sameSender(message, next) ||
             gapMs(message, next) > GROUP_GAP_MS ||
             gapMs(message, next) > SEPARATOR_GAP_MS;

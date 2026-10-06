@@ -27,7 +27,8 @@ actor MessagesStore {
         m.is_from_me AS is_from_me, m.is_delivered AS is_delivered, m.is_sent AS is_sent, m.error AS error, \
         m.cache_has_attachments AS has_attachments, m.thread_originator_guid AS thread_originator_guid, \
         m.associated_message_guid AS associated_guid, m.associated_message_type AS associated_type, \
-        m.item_type AS item_type, m.date_edited AS date_edited, cmj.chat_id AS chat_id
+        m.item_type AS item_type, m.date_edited AS date_edited, m.message_summary_info AS summary_info, \
+        cmj.chat_id AS chat_id
         """
     private static let pendingTimeout: TimeInterval = 60
     private static let statusWindow: Int64 = 400
@@ -47,7 +48,7 @@ actor MessagesStore {
     private var chatGroups: [Int64: [Int64]] = [:]
     private var lastRowID: Int64?
     private var outgoingSignatures: [String: String] = [:]
-    private var editMarks: [String: Int64] = [:]
+    private var editMarks: [String: String] = [:]
     private var pending: [String: [Pending]] = [:]
     private var pollCount = 0
 
@@ -239,7 +240,8 @@ actor MessagesStore {
             clientId: clientId,
             reactions: [],
             replyTo: nil,
-            editedAt: nil
+            editedAt: nil,
+            unsent: nil
         )
     }
 
@@ -314,9 +316,10 @@ actor MessagesStore {
         }
         outgoingSignatures = signatures
 
-        // edits rewrite the row in place, so only date_edited reveals them
+        // edits and unsends rewrite the row in place, so only these columns reveal them
         let edits = try recentEdits(since: newest - Self.editWindow)
-        for (guid, mark) in edits where editMarks[guid] != mark && !created.contains(guid) {
+        for (guid, mark) in edits where !created.contains(guid) {
+            guard let previous = editMarks[guid], previous != mark else { continue }
             if let updated = try fetchMessage(guid: guid) { events.append(.messageUpdated(updated)) }
         }
         editMarks = edits
@@ -368,15 +371,15 @@ actor MessagesStore {
         return result
     }
 
-    private func recentEdits(since rowid: Int64) throws -> [String: Int64] {
+    private func recentEdits(since rowid: Int64) throws -> [String: String] {
         let rows = try connection().query("""
-            SELECT guid AS guid, date_edited AS date_edited FROM message
-            WHERE ROWID > ? AND date_edited != 0 AND associated_message_type = 0
+            SELECT guid AS guid, date_edited AS date_edited, length(message_summary_info) AS summary_size FROM message
+            WHERE ROWID > ? AND associated_message_type = 0 AND item_type = 0
             """, [.int(rowid)])
-        var result: [String: Int64] = [:]
+        var result: [String: String] = [:]
         for row in rows {
-            guard let guid = row.string("guid"), let mark = row.int("date_edited") else { continue }
-            result[guid] = mark
+            guard let guid = row.string("guid") else { continue }
+            result[guid] = "\(row.int("date_edited") ?? 0)|\(row.int("summary_size") ?? 0)"
         }
         return result
     }
@@ -415,8 +418,9 @@ actor MessagesStore {
             guard let rowid = row.int("rowid"), let guid = row.string("guid") else { return nil }
             let fromMe = row.int("is_from_me") == 1
             let text = Self.messageText(row)
-            let attached = files[rowid] ?? []
-            if text == nil && attached.isEmpty { return nil }
+            let unsent = text == nil && Self.isRetracted(row)
+            let attached = unsent ? [] : files[rowid] ?? []
+            if !unsent && text == nil && attached.isEmpty { return nil }
             let sender = try fromMe ? nil : participant(row.int("handle_id") ?? 0)
             return Message(
                 id: guid,
@@ -431,9 +435,10 @@ actor MessagesStore {
                 service: Self.service(row.string("service")) ?? chatService ?? .iMessage,
                 status: fromMe ? Self.outgoingState(row) : .sent,
                 clientId: nil,
-                reactions: tapbacks[guid] ?? [],
+                reactions: unsent ? [] : tapbacks[guid] ?? [],
                 replyTo: row.string("thread_originator_guid").flatMap { $0.isEmpty ? nil : $0 },
-                editedAt: Self.appleDate(row.int("date_edited"))
+                editedAt: unsent ? nil : Self.appleDate(row.int("date_edited")),
+                unsent: unsent ? true : nil
             )
         }
     }
@@ -548,6 +553,15 @@ actor MessagesStore {
         if let slash = raw.lastIndex(of: "/") { return String(raw[raw.index(after: slash)...]) }
         if raw.hasPrefix("bp:") { return String(raw.dropFirst(3)) }
         return raw
+    }
+
+    // "rp" lists the message parts that were unsent
+    private static func isRetracted(_ row: SQLiteRow) -> Bool {
+        guard let data = row.data("summary_info"),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let parts = info["rp"] as? [Any]
+        else { return false }
+        return !parts.isEmpty
     }
 
     private static func messageText(_ row: SQLiteRow) -> String? {

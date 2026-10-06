@@ -8,6 +8,7 @@ import {
   onOverlayDismissed,
   requestOverlayClear,
   sendOverlayNotice,
+  sendOverlayUpdate,
 } from "./desktop";
 import type { Settings } from "./settings";
 import { playNotificationSound, stopNotificationSound } from "./sound";
@@ -39,6 +40,10 @@ export function useIncomingNotifications(
 
   useEffect(() => {
     const offEvents = bridge.subscribe((event) => {
+      if (event.type === "messageUpdated" && isDesktop && (event.message.unsent || event.message.editedAt)) {
+        sendOverlayUpdate(event.message).catch((e) => console.warn("Failed to update notification", e));
+        return;
+      }
       if (event.type !== "messageCreated" || event.message.isFromMe) return;
       if (document.hasFocus()) return;
       const message = event.message;
