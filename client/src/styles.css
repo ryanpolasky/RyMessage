@@ -436,28 +436,11 @@ body {
   position: relative;
 }
 
-.bubble-row.in-thread.from-them,
-.message-edited.in-thread.from-them {
-  padding-left: 16px;
-}
-
-.bubble-row.in-thread.from-them.with-gutter,
-.message-edited.in-thread.from-them.with-gutter {
-  padding-left: 48px;
-}
-
-.bubble-row.in-thread.from-me,
-.message-edited.in-thread.from-me {
-  padding-right: 16px;
-}
-
-.in-thread .bubble-avatar {
-  margin-left: -48px;
-  margin-right: 24px;
-}
-
-.thread-line {
+.thread-lines {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
   pointer-events: none;
   fill: none;
@@ -728,7 +711,7 @@ body {
 
 .reply-quote-row {
   display: flex;
-  margin: 4px 0 2px;
+  margin: 4px 0 6px;
 }
 
 .reply-quote-row.align-right {

@@ -22,8 +22,10 @@ const GROUP_GAP_MS = 60_000;
 const SEPARATOR_GAP_MS = 30 * 60_000;
 const BOTTOM_THRESHOLD_PX = 40;
 const GLIDE_MS = 320;
-const THREAD_INSET_PX = 8;
-const THREAD_RADIUS_PX = 8;
+const BUBBLE_TEXT_INSET_PX = 11;
+const THREAD_RADIUS_PX = 12;
+const THREAD_STUB_PX = 30;
+const THREAD_STUB_CLEARANCE_PX = 6;
 const MAX_JUMBO = 3;
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -31,11 +33,7 @@ const EMOJI_GRAPHEME = /^(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE
 
 interface ThreadLine {
   key: string;
-  fromMe: boolean;
-  x: number;
-  top: number;
-  bottom: number;
-  target: number;
+  d: string;
 }
 
 function jumboCount(message: Message): number {
@@ -45,14 +43,21 @@ function jumboCount(message: Message): number {
   return parts.every((p) => EMOJI_GRAPHEME.test(p.segment)) ? parts.length : 0;
 }
 
-function threadPath(line: ThreadLine): { left: number; width: number; height: number; d: string } {
-  const width = Math.max(1, Math.abs(line.target - line.x));
-  const height = Math.max(1, line.bottom - line.top);
-  const r = Math.min(THREAD_RADIUS_PX, width, height);
-  const d = line.fromMe
-    ? `M${width} 0V${height - r}Q${width} ${height} ${width - r} ${height}H0`
-    : `M0 0V${height - r}Q0 ${height} ${r} ${height}H${width}`;
-  return { left: Math.min(line.x, line.target), width, height, d };
+// grows out of the first reply above its first letter (last for mine), rises to the quote, and bends toward it without reaching it
+function threadPath(quote: DOMRect, reply: DOMRect, fromMe: boolean, box: DOMRect): string {
+  const x = fromMe
+    ? reply.right - box.left - BUBBLE_TEXT_INSET_PX
+    : reply.left - box.left + BUBBLE_TEXT_INSET_PX;
+  const start = reply.top - box.top + 1;
+  const quoteLeft = quote.left - box.left;
+  const quoteRight = quote.right - box.left;
+  if (x >= quoteLeft && x <= quoteRight) return `M${x} ${start}V${quote.bottom - box.top}`;
+  const mid = quote.top - box.top + quote.height / 2;
+  const r = Math.max(2, Math.min(THREAD_RADIUS_PX, start - mid));
+  const dir = (quoteLeft + quoteRight) / 2 >= x ? 1 : -1;
+  const room = (dir === 1 ? quoteLeft - x : x - quoteRight) - THREAD_STUB_CLEARANCE_PX;
+  const reach = Math.max(r, Math.min(THREAD_STUB_PX, room));
+  return `M${x} ${start}V${mid + r}C${x} ${mid + r * 0.45} ${x + dir * r * 0.45} ${mid} ${x + dir * r} ${mid}H${x + dir * reach}`;
 }
 
 function sameSender(a: Message, b: Message): boolean {
@@ -117,21 +122,16 @@ export function MessageList({
       const key = start.dataset.threadStart!;
       const end = content.querySelector<HTMLElement>(`[data-thread-end="${CSS.escape(key)}"]`);
       if (!end) continue;
-      const s = start.getBoundingClientRect();
-      const e = end.getBoundingClientRect();
-      const fromMe = start.dataset.side === "me";
-      next.push({
-        key,
-        fromMe,
-        x: fromMe ? s.right - box.left - THREAD_INSET_PX : s.left - box.left + THREAD_INSET_PX,
-        top: s.bottom - box.top,
-        bottom: e.top - box.top + e.height / 2,
-        target: fromMe ? e.right - box.left : e.left - box.left,
-      });
+      const d = threadPath(
+        start.getBoundingClientRect(),
+        end.getBoundingClientRect(),
+        end.closest(".bubble-row")?.classList.contains("from-me") ?? false,
+        box
+      );
+      next.push({ key, d });
     }
     setThreadLines((prev) =>
-      prev.length === next.length &&
-      prev.every((p, i) => JSON.stringify(p) === JSON.stringify(next[i]))
+      prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.d === next[i].d)
         ? prev
         : next
     );
@@ -250,19 +250,13 @@ export function MessageList({
       onPointerDown={cancelGlide}
     >
       <div ref={contentRef} className="message-content">
-        {threadLines.map((line) => {
-          const { left, width, height, d } = threadPath(line);
-          return (
-            <svg
-              key={line.key}
-              className="thread-line"
-              style={{ left, top: line.top, width, height }}
-              viewBox={`0 0 ${width} ${height}`}
-            >
-              <path d={d} />
-            </svg>
-          );
-        })}
+        {threadLines.length > 0 && (
+          <svg className="thread-lines">
+            {threadLines.map((line) => (
+              <path key={line.key} d={line.d} />
+            ))}
+          </svg>
+        )}
         {messages.map((message, i) => {
           const prev = i > 0 ? messages[i - 1] : null;
           const next = i < messages.length - 1 ? messages[i + 1] : null;
@@ -305,12 +299,10 @@ export function MessageList({
           const firstOfRun = messages[runStart[i]];
           const threadKey = firstOfRun.clientId ?? firstOfRun.id;
           const startsRun = runStart[i] === i;
-          const endsRun = runStart[i + 1] !== runStart[i];
           const jumbo = jumboCount(message);
           const sideClasses = [
             message.isFromMe ? "from-me" : "from-them",
             conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
-            inThread ? "in-thread" : "",
           ];
 
           return (
@@ -330,8 +322,8 @@ export function MessageList({
                 <div
                   className={[
                     "reply-quote-row",
-                    message.isFromMe ? "align-right" : "",
-                    conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
+                    quoteFromMe ? "align-right" : "",
+                    conversation.isGroup && !quoteFromMe ? "with-gutter" : "",
                   ].join(" ")}
                 >
                   <button
@@ -341,7 +333,6 @@ export function MessageList({
                       quoteFromMe && original?.service === "SMS" ? "sms" : "",
                     ].join(" ")}
                     data-thread-start={threadKey}
-                    data-side={message.isFromMe ? "me" : "them"}
                     disabled={!original}
                     onClick={() => original && jumpTo(original.id)}
                   >
@@ -370,7 +361,7 @@ export function MessageList({
                     )}
                     <div
                       data-message-id={index === 0 ? message.id : undefined}
-                      data-thread-end={inThread && endsRun && last ? threadKey : undefined}
+                      data-thread-end={inThread && startsRun && index === 0 ? threadKey : undefined}
                       className={[
                         "bubble",
                         isNew ? "bubble-new" : "",
