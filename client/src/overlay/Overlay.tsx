@@ -4,6 +4,7 @@ import type { Conversation, Message } from "../api/types";
 import { Avatar } from "../components/Avatar";
 import type { OverlayNotice } from "../desktop";
 import { copyText } from "../desktop";
+import { attachmentPreview } from "../utils/attachments";
 import { findVerificationCode, formatVerificationCode } from "../utils/verificationCode";
 
 export const OVERLAY_WIDTH = 412;
@@ -43,9 +44,7 @@ interface OverlayProps {
 
 function bubbleText(message: Message): string {
   if (message.text) return message.text;
-  const att = message.attachments[0];
-  if (!att) return "";
-  return att.mimeType.startsWith("image/") ? "Image" : att.fileName;
+  return message.attachments[0] ? attachmentPreview(message.attachments[0]) : "";
 }
 
 function cardLabel(card: Card): string {

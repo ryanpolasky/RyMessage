@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionStatus } from "../api/bridge";
 import type { Conversation } from "../api/types";
+import { attachmentPreview } from "../utils/attachments";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { sidebarTimestamp } from "../utils/time";
 import { Avatar, ConversationAvatar } from "./Avatar";
@@ -40,14 +41,7 @@ function preview(conversation: Conversation): string {
   const last = conversation.lastMessage;
   if (!last) return "";
   if (last.text) return last.text;
-  if (last.attachments.length > 0) {
-    const att = last.attachments[0];
-    if (att.mimeType.startsWith("image/")) return "Image";
-    if (att.mimeType.startsWith("video/")) return "Video";
-    if (att.mimeType.startsWith("audio/")) return "Audio Message";
-    return att.fileName;
-  }
-  return "";
+  return last.attachments[0] ? attachmentPreview(last.attachments[0]) : "";
 }
 
 function displayName(conversation: Conversation): string {

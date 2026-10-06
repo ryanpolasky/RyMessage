@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
+import { attachmentLabel } from "../utils/attachments";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { separatorParts } from "../utils/time";
 import { AttachmentView } from "./AttachmentView";
@@ -69,12 +70,7 @@ function isVisualMedia(attachment: Attachment): boolean {
 
 function quoteText(message: Message): string {
   if (message.text) return message.text;
-  const att = message.attachments[0];
-  if (!att) return "";
-  if (att.mimeType.startsWith("image/")) return "Image";
-  if (att.mimeType.startsWith("video/")) return "Video";
-  if (att.mimeType.startsWith("audio/")) return "Audio Message";
-  return att.fileName;
+  return message.attachments[0] ? attachmentLabel(message.attachments[0]) : "";
 }
 
 export function MessageList({

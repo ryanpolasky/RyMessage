@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
+import { attachmentLabel } from "../utils/attachments";
 import { ConversationAvatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -75,7 +76,7 @@ export function ChatView({
           <div className="reply-banner-text">
             <span className="reply-banner-label">Replying to {replyName}</span>
             <span className="reply-banner-quote">
-              {replyingTo.text ?? replyingTo.attachments[0]?.fileName ?? ""}
+              {replyingTo.text ?? (replyingTo.attachments[0] ? attachmentLabel(replyingTo.attachments[0]) : "")}
             </span>
           </div>
           <button className="reply-banner-close" onClick={() => setReply(null)} title="Cancel Reply">
