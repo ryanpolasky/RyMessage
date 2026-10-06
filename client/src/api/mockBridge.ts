@@ -169,6 +169,13 @@ momHistory.splice(4, 0, gladReply, restReply);
 
 history["c-alex"].push(msg("c-alex", alex, "🔥🔥🔥", 48), msg("c-alex", null, "🤝", 47));
 
+const DYLAN_BACKLOG = 250;
+history["c-dylan"].unshift(
+  ...Array.from({ length: DYLAN_BACKLOG }, (_, k) =>
+    msg("c-dylan", k % 3 === 0 ? null : dylan, `standup note #${k + 1}`, 3000 + (DYLAN_BACKLOG - k) * 20)
+  )
+);
+
 const SUNSET_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3a8c"/><stop offset=".55" stop-color="#f0708a"/><stop offset="1" stop-color="#ffc36b"/></linearGradient><linearGradient id="w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2697f"/><stop offset="1" stop-color="#1f2a66"/></linearGradient></defs><rect width="600" height="260" fill="url(#s)"/><circle cx="300" cy="250" r="70" fill="#ffe08a"/><rect y="250" width="600" height="150" fill="url(#w)"/><g fill="#ffe7a8" opacity=".7"><rect x="250" y="270" width="100" height="4" rx="2"/><rect x="265" y="290" width="70" height="4" rx="2"/><rect x="280" y="310" width="40" height="3" rx="1.5"/></g></svg>`;
 const sunset = msg("c-mom", mom, "", 25);
 sunset.text = null;

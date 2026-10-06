@@ -16,11 +16,14 @@ interface MessageListProps {
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
   onReact: (message: Message, kind: TapbackKind | null) => void;
   onReply: (message: Message) => void;
+  historyState: "idle" | "loading" | "done";
+  onLoadOlder: () => void;
 }
 
 const GROUP_GAP_MS = 60_000;
 const SEPARATOR_GAP_MS = 30 * 60_000;
 const BOTTOM_THRESHOLD_PX = 40;
+const LOAD_OLDER_THRESHOLD_PX = 300;
 const GLIDE_MS = 320;
 const BUBBLE_TEXT_INSET_PX = 11;
 const THREAD_RADIUS_PX = 12;
@@ -82,6 +85,8 @@ function quoteText(message: Message): string {
 export function MessageList({
   conversation,
   messages,
+  historyState,
+  onLoadOlder,
   capabilities,
   loadAttachment,
   onReact,
@@ -161,11 +166,43 @@ export function MessageList({
       canReply,
     });
   }
-  const initialRef = useRef<{ id: string; ids: Set<string> } | null>(null);
+  const initialRef = useRef<{ id: string; ids: Set<string>; newest: number } | null>(null);
   if (initialRef.current?.id !== conversation.id) {
-    initialRef.current = { id: conversation.id, ids: new Set(messages.map((m) => m.id)) };
+    initialRef.current = {
+      id: conversation.id,
+      ids: new Set(messages.map((m) => m.id)),
+      newest: Math.max(0, ...messages.map((m) => Date.parse(m.sentAt))),
+    };
   }
   const initialIds = initialRef.current.ids;
+  const initialNewest = initialRef.current.newest;
+
+  // older pages land above the viewport, so the content height from the last render tells us how far to shift
+  const anchorRef = useRef<string | null>(null);
+  const lastHeightRef = useRef(0);
+  const firstKey = messages[0] ? (messages[0].clientId ?? messages[0].id) : "";
+
+  function requestOlder() {
+    if (!listRef.current || historyState !== "idle" || anchorRef.current !== null) return;
+    anchorRef.current = firstKey;
+    onLoadOlder();
+  }
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (anchorRef.current !== null && historyState !== "loading") {
+      if (anchorRef.current !== firstKey) list.scrollTop += list.scrollHeight - lastHeightRef.current;
+      anchorRef.current = null;
+    }
+    if (historyState === "idle" && list.scrollHeight <= list.clientHeight + LOAD_OLDER_THRESHOLD_PX) {
+      requestOlder();
+    }
+  }, [firstKey, historyState]);
+
+  useLayoutEffect(() => {
+    lastHeightRef.current = listRef.current?.scrollHeight ?? 0;
+  });
 
   const glideRef = useRef<number | null>(null);
 
@@ -245,11 +282,17 @@ export function MessageList({
         const el = e.currentTarget;
         pinnedToBottomRef.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD_PX;
+        if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX) requestOlder();
       }}
       onWheel={cancelGlide}
       onPointerDown={cancelGlide}
     >
       <div ref={contentRef} className="message-content">
+        {historyState === "loading" && (
+          <div className="history-loading">
+            <div className="loading-spinner" />
+          </div>
+        )}
         {threadLines.length > 0 && (
           <svg className="thread-lines">
             {threadLines.map((line) => (
@@ -289,7 +332,7 @@ export function MessageList({
           const showSenderName = conversation.isGroup && !message.isFromMe && firstInGroup;
           const showAvatar = conversation.isGroup && !message.isFromMe && lastInGroup;
 
-          const isNew = !initialIds.has(message.id);
+          const isNew = !initialIds.has(message.id) && Date.parse(message.sentAt) > initialNewest;
           const media = message.attachments.filter(isVisualMedia);
           const files = message.attachments.filter((a) => !isVisualMedia(a));
           const parts: (Attachment | null)[] = [...media, ...(message.text || files.length ? [null] : [])];

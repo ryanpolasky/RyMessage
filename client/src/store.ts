@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionStatus, RyMessageBridge } from "./api/bridge";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "./api/types";
 
+const PAGE_SIZE = 100;
 const PINS_KEY = "rymessage.pins";
 const READ_KEY = "rymessage.readThrough";
 const HIDDEN_KEY = "rymessage.hidden";
@@ -74,6 +75,9 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [messageErrors, setMessageErrors] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<Record<string, "loading" | "done">>({});
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [pinOverrides, setPinOverrides] = usePersistedRecord<boolean>(PINS_KEY);
@@ -108,21 +112,51 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   const loadMessages = useCallback(
     (id: string) => {
       setMessageErrors((cur) => withoutKey(cur, id));
-      bridge.getMessages(id).then(
+      bridge.getMessages(id, undefined, PAGE_SIZE).then(
         (newestFirst) => {
           const fetched = [...newestFirst].reverse();
+          const oldestFetched = fetched.length ? timeOf(fetched[0]) : Infinity;
           setMessages((cur) => {
-            const pending = (cur[id] ?? []).filter(
-              (m) => m.id.startsWith("local-") && !fetched.some((f) => sameMessage(f, m))
+            const existing = cur[id] ?? [];
+            const unseen = (m: Message) => !fetched.some((f) => sameMessage(f, m));
+            // a reconnect refetch shouldn't throw away history that was already paged in
+            const older = existing.filter(
+              (m) => !m.id.startsWith("local-") && timeOf(m) < oldestFetched && unseen(m)
             );
-            return { ...cur, [id]: [...fetched, ...pending] };
+            const pending = existing.filter((m) => m.id.startsWith("local-") && unseen(m));
+            return { ...cur, [id]: [...older, ...fetched, ...pending] };
           });
+          if (fetched.length === 0) setHistory((cur) => ({ ...cur, [id]: "done" }));
         },
         (e) => setMessageErrors((cur) => ({ ...cur, [id]: errorMessage(e) }))
       );
     },
     [bridge]
   );
+
+  const loadOlder = useCallback(() => {
+    const id = selectedIdRef.current;
+    if (!id || historyRef.current[id]) return;
+    const oldest = messagesRef.current[id]?.find((m) => !m.id.startsWith("local-"));
+    if (!oldest) return;
+    historyRef.current = { ...historyRef.current, [id]: "loading" };
+    setHistory((cur) => ({ ...cur, [id]: "loading" }));
+    bridge.getMessages(id, oldest.id, PAGE_SIZE).then(
+      (newestFirst) => {
+        const page = [...newestFirst].reverse();
+        setMessages((cur) => {
+          const existing = cur[id] ?? [];
+          const fresh = page.filter((m) => !existing.some((e) => sameMessage(e, m)));
+          return { ...cur, [id]: [...fresh, ...existing] };
+        });
+        setHistory((cur) => (page.length === 0 ? { ...cur, [id]: "done" } : withoutKey(cur, id)));
+      },
+      (e) => {
+        console.warn("Failed to load older messages", e);
+        setHistory((cur) => withoutKey(cur, id));
+      }
+    );
+  }, [bridge]);
 
   const markRead = useCallback(
     (id: string, through?: string) => {
@@ -354,6 +388,8 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     retryLoad: loadConversations,
     messages,
     messageError: selectedId ? (messageErrors[selectedId] ?? null) : null,
+    historyState: (selectedId && history[selectedId]) || ("idle" as const),
+    loadOlder,
     retryLoadMessages,
     status,
     selected,

@@ -149,6 +149,8 @@ function Messenger({
             conversation={store.selected}
             messages={store.messages[store.selected.id]}
             messageError={store.messageError}
+            historyState={store.historyState}
+            onLoadOlder={store.loadOlder}
             capabilities={store.capabilities}
             loadAttachment={loadAttachment}
             onRetry={store.retryLoadMessages}

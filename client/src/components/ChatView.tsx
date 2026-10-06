@@ -9,6 +9,8 @@ interface ChatViewProps {
   conversation: Conversation;
   messages: Message[] | undefined;
   messageError: string | null;
+  historyState: "idle" | "loading" | "done";
+  onLoadOlder: () => void;
   capabilities: Capabilities | null;
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
   onRetry: () => void;
@@ -21,6 +23,8 @@ export function ChatView({
   conversation,
   messages,
   messageError,
+  historyState,
+  onLoadOlder,
   capabilities,
   loadAttachment,
   onRetry,
@@ -51,6 +55,8 @@ export function ChatView({
         <MessageList
           conversation={conversation}
           messages={messages}
+          historyState={historyState}
+          onLoadOlder={onLoadOlder}
           capabilities={capabilities}
           loadAttachment={loadAttachment}
           onReact={onReact}
