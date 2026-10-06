@@ -84,6 +84,7 @@ interface Message {
   clientId: string | null;
   reactions: Reaction[];
   replyTo: string | null;
+  editedAt?: string | null;
 }
 
 type TapbackKind = "love" | "like" | "dislike" | "laugh" | "emphasize" | "question";
@@ -120,6 +121,8 @@ interface Contact {
 `clientId` echoes the client-generated id supplied at send time so optimistic messages can be reconciled with their final records.
 
 `reactions` holds at most one tapback per participant, matching iMessage. `replyTo` is the id of the message this one replies to (the thread originator), or `null`.
+
+`editedAt` is when the message was last edited, and is absent or `null` for messages that were never edited. `text` always holds the latest version.
 
 `Attachment.url` is a path relative to the server base URL, e.g. `/v1/attachments/<id>`. It requires the bearer token, so clients must fetch it with the `Authorization` header rather than linking it directly (an `<img src>` cannot authenticate).
 
@@ -198,7 +201,7 @@ Server pushes:
 
 `contactsChanged` fires when the Mac's Contacts change; clients refetch `GET /v1/contacts` with their cached version.
 
-`messageUpdated` fires on delivery/read status changes, tapback changes, and on reconciliation of optimistic sends (matched via `clientId`).
+`messageUpdated` fires on delivery/read status changes, tapback changes, edits, and on reconciliation of optimistic sends (matched via `clientId`).
 
 Events are not replayed. Clients must refetch conversations and any open message history after a reconnect.
 

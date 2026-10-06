@@ -81,6 +81,7 @@ struct Message: Content {
     var clientId: String?
     var reactions: [Reaction]
     var replyTo: String?
+    var editedAt: Date?
 }
 
 enum TapbackKind: String, Content {

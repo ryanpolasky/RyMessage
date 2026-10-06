@@ -432,6 +432,67 @@ body {
   z-index: 1;
 }
 
+.message-content {
+  position: relative;
+}
+
+.bubble-row.in-thread.from-them,
+.message-edited.in-thread.from-them {
+  padding-left: 16px;
+}
+
+.bubble-row.in-thread.from-them.with-gutter,
+.message-edited.in-thread.from-them.with-gutter {
+  padding-left: 48px;
+}
+
+.bubble-row.in-thread.from-me,
+.message-edited.in-thread.from-me {
+  padding-right: 16px;
+}
+
+.in-thread .bubble-avatar {
+  margin-left: -48px;
+  margin-right: 24px;
+}
+
+.thread-line {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+.bubble.bubble-emoji {
+  padding: 0 2px;
+  background: transparent;
+  font-size: 38px;
+  line-height: 1.2;
+  letter-spacing: -0.12em;
+}
+
+.bubble.bubble-emoji.jumbo-1 {
+  font-size: 46px;
+}
+
+.message-edited {
+  margin: -5px 4px 8px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.message-edited.from-me {
+  text-align: right;
+}
+
+.message-edited.with-gutter {
+  padding-left: 32px;
+}
+
 .from-me {
   --bubble-bg: var(--bubble-me);
   --bubble-fg: var(--bubble-me-text);
@@ -748,8 +809,8 @@ body {
   cursor: default;
 }
 
-.last-in-group .bubble:not(.bubble-media)::before,
-.last-in-group .bubble:not(.bubble-media)::after {
+.last-in-group .bubble:not(.bubble-media, .bubble-emoji)::before,
+.last-in-group .bubble:not(.bubble-media, .bubble-emoji)::after {
   content: "";
   position: absolute;
   bottom: 0;

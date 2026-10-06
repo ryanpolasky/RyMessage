@@ -27,10 +27,11 @@ actor MessagesStore {
         m.is_from_me AS is_from_me, m.is_delivered AS is_delivered, m.is_sent AS is_sent, m.error AS error, \
         m.cache_has_attachments AS has_attachments, m.thread_originator_guid AS thread_originator_guid, \
         m.associated_message_guid AS associated_guid, m.associated_message_type AS associated_type, \
-        m.item_type AS item_type, cmj.chat_id AS chat_id
+        m.item_type AS item_type, m.date_edited AS date_edited, cmj.chat_id AS chat_id
         """
     private static let pendingTimeout: TimeInterval = 60
     private static let statusWindow: Int64 = 400
+    private static let editWindow: Int64 = 2000
 
     static var databasePath: String {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db").path
@@ -46,6 +47,7 @@ actor MessagesStore {
     private var chatGroups: [Int64: [Int64]] = [:]
     private var lastRowID: Int64?
     private var outgoingSignatures: [String: String] = [:]
+    private var editMarks: [String: Int64] = [:]
     private var pending: [String: [Pending]] = [:]
     private var pollCount = 0
 
@@ -236,7 +238,8 @@ actor MessagesStore {
             status: .sending,
             clientId: clientId,
             reactions: [],
-            replyTo: nil
+            replyTo: nil,
+            editedAt: nil
         )
     }
 
@@ -263,6 +266,7 @@ actor MessagesStore {
             let newest = try db.query("SELECT MAX(ROWID) AS newest FROM message").first?.int("newest") ?? 0
             lastRowID = newest
             outgoingSignatures = try outgoingStatus(since: newest - Self.statusWindow)
+            editMarks = try recentEdits(since: newest - Self.editWindow)
             return events
         }
 
@@ -273,6 +277,7 @@ actor MessagesStore {
         var newest = last
         var touched: [[Int64]] = []
         var reactionTargets: [String] = []
+        var created = Set<String>()
         for row in rows {
             guard let rowid = row.int("rowid"), let chatId = row.int("chat_id") else { continue }
             newest = max(newest, rowid)
@@ -289,6 +294,7 @@ actor MessagesStore {
                 if message.isFromMe {
                     message.clientId = claimPending(conversationId: message.conversationId, text: message.text)
                 }
+                created.insert(message.id)
                 events.append(.messageCreated(message))
             } else {
                 continue
@@ -307,6 +313,13 @@ actor MessagesStore {
             if let updated = try fetchMessage(guid: guid) { events.append(.messageUpdated(updated)) }
         }
         outgoingSignatures = signatures
+
+        // edits rewrite the row in place, so only date_edited reveals them
+        let edits = try recentEdits(since: newest - Self.editWindow)
+        for (guid, mark) in edits where editMarks[guid] != mark && !created.contains(guid) {
+            if let updated = try fetchMessage(guid: guid) { events.append(.messageUpdated(updated)) }
+        }
+        editMarks = edits
 
         events += expirePending()
         for ids in touched {
@@ -351,6 +364,19 @@ actor MessagesStore {
             guard let guid = row.string("guid") else { continue }
             let parts = ["delivered_at", "read_at", "is_delivered", "is_sent", "error"].map { String(row.int($0) ?? 0) }
             result[guid] = parts.joined(separator: "|")
+        }
+        return result
+    }
+
+    private func recentEdits(since rowid: Int64) throws -> [String: Int64] {
+        let rows = try connection().query("""
+            SELECT guid AS guid, date_edited AS date_edited FROM message
+            WHERE ROWID > ? AND date_edited != 0 AND associated_message_type = 0
+            """, [.int(rowid)])
+        var result: [String: Int64] = [:]
+        for row in rows {
+            guard let guid = row.string("guid"), let mark = row.int("date_edited") else { continue }
+            result[guid] = mark
         }
         return result
     }
@@ -406,7 +432,8 @@ actor MessagesStore {
                 status: fromMe ? Self.outgoingState(row) : .sent,
                 clientId: nil,
                 reactions: tapbacks[guid] ?? [],
-                replyTo: row.string("thread_originator_guid").flatMap { $0.isEmpty ? nil : $0 }
+                replyTo: row.string("thread_originator_guid").flatMap { $0.isEmpty ? nil : $0 },
+                editedAt: Self.appleDate(row.int("date_edited"))
             )
         }
     }

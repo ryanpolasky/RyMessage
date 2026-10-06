@@ -21,6 +21,38 @@ const GROUP_GAP_MS = 60_000;
 const SEPARATOR_GAP_MS = 30 * 60_000;
 const BOTTOM_THRESHOLD_PX = 40;
 const GLIDE_MS = 320;
+const THREAD_INSET_PX = 8;
+const THREAD_RADIUS_PX = 8;
+const MAX_JUMBO = 3;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const EMOJI_GRAPHEME = /^(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3)/u;
+
+interface ThreadLine {
+  key: string;
+  fromMe: boolean;
+  x: number;
+  top: number;
+  bottom: number;
+  target: number;
+}
+
+function jumboCount(message: Message): number {
+  if (!message.text || message.attachments.length > 0) return 0;
+  const parts = [...graphemes.segment(message.text.replace(/\s/g, ""))];
+  if (parts.length === 0 || parts.length > MAX_JUMBO) return 0;
+  return parts.every((p) => EMOJI_GRAPHEME.test(p.segment)) ? parts.length : 0;
+}
+
+function threadPath(line: ThreadLine): { left: number; width: number; height: number; d: string } {
+  const width = Math.max(1, Math.abs(line.target - line.x));
+  const height = Math.max(1, line.bottom - line.top);
+  const r = Math.min(THREAD_RADIUS_PX, width, height);
+  const d = line.fromMe
+    ? `M${width} 0V${height - r}Q${width} ${height} ${width - r} ${height}H0`
+    : `M0 0V${height - r}Q0 ${height} ${r} ${height}H${width}`;
+  return { left: Math.min(line.x, line.target), width, height, d };
+}
 
 function sameSender(a: Message, b: Message): boolean {
   if (a.isFromMe !== b.isFromMe) return false;
@@ -59,6 +91,54 @@ export function MessageList({
   const [menu, setMenu] = useState<MessageMenuState | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
+  const [threadLines, setThreadLines] = useState<ThreadLine[]>([]);
+
+  // consecutive replies from one sender to the same message share a single quote
+  const runStart = useMemo(() => {
+    const starts: number[] = [];
+    messages.forEach((m, i) => {
+      const prev = messages[i - 1];
+      const continues =
+        prev !== undefined &&
+        m.replyTo != null &&
+        prev.replyTo === m.replyTo &&
+        sameSender(prev, m) &&
+        gapMs(prev, m) <= SEPARATOR_GAP_MS;
+      starts.push(continues ? starts[i - 1] : i);
+    });
+    return starts;
+  }, [messages]);
+
+  const measureThreads = useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const box = content.getBoundingClientRect();
+    const next: ThreadLine[] = [];
+    for (const start of content.querySelectorAll<HTMLElement>("[data-thread-start]")) {
+      const key = start.dataset.threadStart!;
+      const end = content.querySelector<HTMLElement>(`[data-thread-end="${CSS.escape(key)}"]`);
+      if (!end) continue;
+      const s = start.getBoundingClientRect();
+      const e = end.getBoundingClientRect();
+      const fromMe = start.dataset.side === "me";
+      next.push({
+        key,
+        fromMe,
+        x: fromMe ? s.right - box.left - THREAD_INSET_PX : s.left - box.left + THREAD_INSET_PX,
+        top: s.bottom - box.top,
+        bottom: e.top - box.top + e.height / 2,
+        target: fromMe ? e.right - box.left : e.left - box.left,
+      });
+    }
+    setThreadLines((prev) =>
+      prev.length === next.length &&
+      prev.every((p, i) => JSON.stringify(p) === JSON.stringify(next[i]))
+        ? prev
+        : next
+    );
+  }, []);
+
+  useLayoutEffect(measureThreads, [messages, measureThreads]);
 
   function jumpTo(id: string) {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
@@ -133,6 +213,7 @@ export function MessageList({
 
   useEffect(() => {
     const observer = new ResizeObserver(() => {
+      measureThreads();
       if (pinnedToBottomRef.current) glideToBottom();
     });
     observer.observe(listRef.current!);
@@ -169,7 +250,20 @@ export function MessageList({
       onWheel={cancelGlide}
       onPointerDown={cancelGlide}
     >
-      <div ref={contentRef}>
+      <div ref={contentRef} className="message-content">
+        {threadLines.map((line) => {
+          const { left, width, height, d } = threadPath(line);
+          return (
+            <svg
+              key={line.key}
+              className="thread-line"
+              style={{ left, top: line.top, width, height }}
+              viewBox={`0 0 ${width} ${height}`}
+            >
+              <path d={d} />
+            </svg>
+          );
+        })}
         {messages.map((message, i) => {
           const prev = i > 0 ? messages[i - 1] : null;
           const next = i < messages.length - 1 ? messages[i + 1] : null;
@@ -190,6 +284,17 @@ export function MessageList({
           const parts: (Attachment | null)[] = [...media, ...(message.text || files.length ? [null] : [])];
           const original = message.replyTo != null ? byId.get(message.replyTo) : undefined;
           const quoteFromMe = original ? original.isFromMe : message.isFromMe;
+          const inThread = message.replyTo != null;
+          const firstOfRun = messages[runStart[i]];
+          const threadKey = firstOfRun.clientId ?? firstOfRun.id;
+          const startsRun = runStart[i] === i;
+          const endsRun = runStart[i + 1] !== runStart[i];
+          const jumbo = jumboCount(message);
+          const sideClasses = [
+            message.isFromMe ? "from-me" : "from-them",
+            conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
+            inThread ? "in-thread" : "",
+          ];
 
           return (
             <div key={message.clientId ?? message.id}>
@@ -204,7 +309,7 @@ export function MessageList({
                   {message.sender.displayName ?? message.sender.handle}
                 </div>
               )}
-              {message.replyTo != null && (
+              {inThread && startsRun && (
                 <div
                   className={[
                     "reply-quote-row",
@@ -218,6 +323,8 @@ export function MessageList({
                       quoteFromMe ? "from-me" : "from-them",
                       quoteFromMe && original?.service === "SMS" ? "sms" : "",
                     ].join(" ")}
+                    data-thread-start={threadKey}
+                    data-side={message.isFromMe ? "me" : "them"}
                     disabled={!original}
                     onClick={() => original && jumpTo(original.id)}
                   >
@@ -232,10 +339,9 @@ export function MessageList({
                     key={part ? `media-${index}` : "text"}
                     className={[
                       "bubble-row",
-                      message.isFromMe ? "from-me" : "from-them",
+                      ...sideClasses,
                       message.isFromMe && message.service === "SMS" ? "sms" : "",
                       last && lastInGroup ? "last-in-group" : "",
-                      conversation.isGroup && !message.isFromMe ? "with-gutter" : "",
                       last && message.reactions.length > 0 ? "has-reactions" : "",
                       last ? "" : "part-of-message",
                     ].join(" ")}
@@ -247,10 +353,12 @@ export function MessageList({
                     )}
                     <div
                       data-message-id={index === 0 ? message.id : undefined}
+                      data-thread-end={inThread && endsRun && last ? threadKey : undefined}
                       className={[
                         "bubble",
                         isNew ? "bubble-new" : "",
                         part ? "bubble-media" : "",
+                        jumbo ? `bubble-emoji jumbo-${jumbo}` : "",
                         menu?.message.id === message.id ? "bubble-active" : "",
                       ].join(" ")}
                       onContextMenu={(e) => openMenu(e, message)}
@@ -270,6 +378,9 @@ export function MessageList({
                   </div>
                 );
               })}
+              {message.editedAt && (
+                <div className={["message-edited", ...sideClasses].join(" ")}>Edited</div>
+              )}
               {message.isFromMe && message.status === "sending" && (
                 <div className="message-status">Sending...</div>
               )}

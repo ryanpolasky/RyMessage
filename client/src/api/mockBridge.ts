@@ -156,7 +156,18 @@ react(group[5], "laugh", null, 283);
 react(group[6], "dislike", sam, 11);
 const robbedReply = msg("c-group", null, "we absolutely got robbed", 283);
 robbedReply.replyTo = group[4].id;
-group.splice(6, 0, robbedReply);
+const riggedReply = msg("c-group", null, "the mercury question was rigged anyway", 282);
+riggedReply.replyTo = group[4].id;
+group.splice(6, 0, robbedReply, riggedReply);
+
+const momHistory = history["c-mom"];
+const gladReply = msg("c-mom", mom, "So glad you made it", 213);
+gladReply.replyTo = momHistory[1].id;
+const restReply = msg("c-mom", mom, "Get some rest!", 212);
+restReply.replyTo = momHistory[1].id;
+momHistory.splice(4, 0, gladReply, restReply);
+
+history["c-alex"].push(msg("c-alex", alex, "🔥🔥🔥", 48), msg("c-alex", null, "🤝", 47));
 
 const SUNSET_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3a8c"/><stop offset=".55" stop-color="#f0708a"/><stop offset="1" stop-color="#ffc36b"/></linearGradient><linearGradient id="w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2697f"/><stop offset="1" stop-color="#1f2a66"/></linearGradient></defs><rect width="600" height="260" fill="url(#s)"/><circle cx="300" cy="250" r="70" fill="#ffe08a"/><rect y="250" width="600" height="150" fill="url(#w)"/><g fill="#ffe7a8" opacity=".7"><rect x="250" y="270" width="100" height="4" rx="2"/><rect x="265" y="290" width="70" height="4" rx="2"/><rect x="280" y="310" width="40" height="3" rx="1.5"/></g></svg>`;
 const sunset = msg("c-mom", mom, "", 25);
@@ -250,8 +261,13 @@ const replies: Record<string, string[]> = {
   "c-casey": ["perfect", "salsa too if you can", "see you then"],
 };
 
-const ambient: { conversationId: string; from: Participant; text: string }[] = [
-  { conversationId: "c-alex", from: alex, text: "yo are you watching this" },
+const ambient: { conversationId: string; from: Participant; text: string; editTo?: string }[] = [
+  {
+    conversationId: "c-alex",
+    from: alex,
+    text: "yo are you wathcing this",
+    editTo: "yo are you watching this",
+  },
   {
     conversationId: "c-46001",
     from: shortCode,
@@ -454,7 +470,7 @@ export class MockBridge implements RyMessageBridge {
   private scheduleAmbient() {
     const [min, max] = this.ambientDelayMs;
     this.ambientTimer = window.setTimeout(() => {
-      const { conversationId, from, text } = ambient[ambientIndex % ambient.length];
+      const { conversationId, from, text, editTo } = ambient[ambientIndex % ambient.length];
       ambientIndex += 1;
       messageCounter += 1;
       const message: Message = {
@@ -478,6 +494,13 @@ export class MockBridge implements RyMessageBridge {
       if (convo) convo.unreadCount += 1;
       this.emit({ type: "messageCreated", message: { ...message } });
       this.touchConversation(conversationId, message);
+      if (editTo) {
+        setTimeout(() => {
+          message.text = editTo;
+          message.editedAt = new Date().toISOString();
+          this.emit({ type: "messageUpdated", message: { ...message } });
+        }, 3000);
+      }
       this.scheduleAmbient();
     }, min + Math.random() * (max - min));
   }

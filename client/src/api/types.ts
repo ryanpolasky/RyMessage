@@ -60,6 +60,7 @@ export interface Message {
   clientId: string | null;
   reactions: Reaction[];
   replyTo: string | null;
+  editedAt?: string | null;
 }
 
 export type TapbackKind = "love" | "like" | "dislike" | "laugh" | "emphasize" | "question";
