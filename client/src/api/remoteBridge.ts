@@ -10,6 +10,10 @@ import type {
 } from "./types";
 
 const POLICY_VIOLATION = 1008;
+const WATCHDOG_MS = 15_000;
+const SLEEP_GAP_MS = 60_000;
+const PING_STALE_MS = 20_000;
+const PING_FRAME = '{"type":"ping"}';
 
 export class RemoteBridge implements RyMessageBridge {
   private listeners = new Set<(event: BridgeEvent) => void>();
@@ -18,6 +22,9 @@ export class RemoteBridge implements RyMessageBridge {
   private socket: WebSocket | null = null;
   private reconnectDelay = 1000;
   private reconnectTimer: number | null = null;
+  private watchdog: number | null = null;
+  private lastTickAt = 0;
+  private pingSentAt = 0;
 
   constructor(
     private baseUrl: string,
@@ -104,6 +111,7 @@ export class RemoteBridge implements RyMessageBridge {
 
   subscribe(listener: (event: BridgeEvent) => void): () => void {
     this.listeners.add(listener);
+    this.startWatchdog();
     if (!this.socket && this.reconnectTimer === null && this.status !== "unauthorized") {
       this.connect();
     }
@@ -117,6 +125,11 @@ export class RemoteBridge implements RyMessageBridge {
   }
 
   close(): void {
+    if (this.watchdog !== null) {
+      clearInterval(this.watchdog);
+      this.watchdog = null;
+      window.removeEventListener("online", this.onBackOnline);
+    }
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -155,9 +168,61 @@ export class RemoteBridge implements RyMessageBridge {
     }
   }
 
+  private onBackOnline = () => {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.dropSocket();
+  };
+
+  private startWatchdog() {
+    if (this.watchdog !== null) return;
+    this.lastTickAt = Date.now();
+    this.watchdog = window.setInterval(() => this.checkSocket(), WATCHDOG_MS);
+    window.addEventListener("online", this.onBackOnline);
+  }
+
+  // a half-dead socket never fires onclose, so we drop it and start fresh; the stale guard ignores its late close
+  private dropSocket() {
+    const socket = this.socket;
+    this.socket = null;
+    this.pingSentAt = 0;
+    socket?.close();
+    if (this.reconnectTimer === null) this.connect();
+  }
+
+  private checkSocket() {
+    const now = Date.now();
+    const slept = now - this.lastTickAt > SLEEP_GAP_MS;
+    this.lastTickAt = now;
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      this.pingSentAt = 0;
+      return;
+    }
+    if (slept) {
+      this.dropSocket();
+      return;
+    }
+    if (this.pingSentAt !== 0) {
+      if (socket.bufferedAmount === 0) {
+        this.pingSentAt = 0;
+      } else if (now - this.pingSentAt > PING_STALE_MS) {
+        this.dropSocket();
+        return;
+      }
+    }
+    if (this.pingSentAt === 0) {
+      socket.send(PING_FRAME);
+      this.pingSentAt = now;
+    }
+  }
+
   private connect() {
     this.reconnectTimer = null;
     this.setStatus("connecting");
+    this.pingSentAt = 0;
     const socket = new WebSocket(`${this.baseUrl.replace(/^http/, "ws")}/v1/events`);
     this.socket = socket;
     socket.onopen = () => {
