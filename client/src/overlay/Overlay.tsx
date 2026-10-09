@@ -187,7 +187,6 @@ export function Overlay({
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
   const timers = useRef(new Map<string, number>());
-  const hovered = useRef(false);
   const ttlRef = useRef(ttlMs);
   ttlRef.current = ttlMs;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -205,7 +204,7 @@ export function Overlay({
   const schedule = useCallback(
     (key: string) => {
       clearTimeout(timers.current.get(key));
-      if (hovered.current || ttlRef.current === null) return;
+      if (rootRef.current?.matches(":hover") || ttlRef.current === null) return;
       timers.current.set(key, window.setTimeout(() => dismiss(key), ttlRef.current));
     },
     [dismiss]
@@ -274,12 +273,10 @@ export function Overlay({
       className="overlay-root"
       ref={rootRef}
       onMouseEnter={() => {
-        hovered.current = true;
         for (const timer of timers.current.values()) clearTimeout(timer);
       }}
       onMouseLeave={() => {
-        hovered.current = false;
-        for (const card of cards) if (!card.leaving) schedule(card.key);
+        for (const card of cardsRef.current) if (!card.leaving) schedule(card.key);
       }}
     >
       {cards.map((card) => {
