@@ -44,6 +44,14 @@ export function requestOverlayClear(): Promise<void> {
   return emitTo("overlay", CLEAR_EVENT);
 }
 
+export function isWindowFocused(): Promise<boolean> {
+  return isDesktop ? getCurrentWindow().isFocused() : Promise.resolve(document.hasFocus());
+}
+
+export function onWindowFocusChanged(handler: (focused: boolean) => void): () => void {
+  return unlistenLater(getCurrentWindow().onFocusChanged((event) => handler(event.payload)));
+}
+
 export function onOverlayClear(handler: () => void): () => void {
   return unlistenLater(listen(CLEAR_EVENT, handler));
 }

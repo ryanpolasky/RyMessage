@@ -4,8 +4,10 @@ import type { Conversation, Message } from "./api/types";
 import { withInlineAvatar } from "./avatars";
 import {
   isDesktop,
+  isWindowFocused,
   onOpenConversation,
   onOverlayDismissed,
+  onWindowFocusChanged,
   requestOverlayClear,
   sendOverlayNotice,
   sendOverlayUpdate,
@@ -37,6 +39,7 @@ export function useIncomingNotifications(
   conversationsRef.current = conversations;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const focusedRef = useRef(false);
 
   useEffect(() => {
     const offEvents = bridge.subscribe((event) => {
@@ -45,7 +48,7 @@ export function useIncomingNotifications(
         return;
       }
       if (event.type !== "messageCreated" || event.message.isFromMe) return;
-      if (document.hasFocus()) return;
+      if (isDesktop ? focusedRef.current : document.hasFocus()) return;
       const message = event.message;
       void playNotificationSound(settingsRef.current.sound);
       if (!isDesktop || !settingsRef.current.overlay) return;
@@ -69,18 +72,28 @@ export function useIncomingNotifications(
         })
       : () => {};
     const offDismissed = isDesktop ? onOverlayDismissed(stopNotificationSound) : () => {};
-    const onFocus = () => {
+    // document.hasFocus() stays true on a window that was never shown, so track the real window focus
+    const onFocused = () => {
       stopNotificationSound();
-      if (isDesktop) {
-        requestOverlayClear().catch((e) => console.warn("Failed to clear notifications", e));
-      }
+      requestOverlayClear().catch((e) => console.warn("Failed to clear notifications", e));
     };
-    window.addEventListener("focus", onFocus);
+    const offFocus = isDesktop
+      ? (isWindowFocused().then((f) => (focusedRef.current = f)),
+        onWindowFocusChanged((focused) => {
+          focusedRef.current = focused;
+          if (focused) onFocused();
+        }))
+      : () => {};
+    const onDomFocus = () => {
+      stopNotificationSound();
+    };
+    if (!isDesktop) window.addEventListener("focus", onDomFocus);
     return () => {
       offEvents();
       offOpen();
       offDismissed();
-      window.removeEventListener("focus", onFocus);
+      offFocus();
+      if (!isDesktop) window.removeEventListener("focus", onDomFocus);
     };
   }, [bridge, onOpen]);
 }
