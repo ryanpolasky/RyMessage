@@ -57,13 +57,21 @@ export function useIncomingNotifications(
         fallbackConversation(message);
       if (!conversation) return;
       const loadAvatar = (url: string) => bridge.getAvatar(url);
-      Promise.all([
+      const timedOut = Symbol("timedOut");
+      const avatars = Promise.all([
         message.sender ? withInlineAvatar(message.sender, loadAvatar) : null,
         Promise.all(conversation.participants.map((p) => withInlineAvatar(p, loadAvatar))),
-      ])
-        .then(([sender, participants]) =>
-          sendOverlayNotice({ conversation: { ...conversation, participants }, message: { ...message, sender } })
-        )
+      ]);
+      // a stalled avatar fetch must never block the notification itself
+      Promise.race([avatars, new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), 1500))])
+        .then((loaded) => {
+          const [sender, participants] =
+            loaded === timedOut ? [message.sender, conversation.participants] : loaded;
+          const notice = { conversation: { ...conversation, participants }, message: { ...message, sender } };
+          sendOverlayNotice(notice).catch((e) => console.warn("Failed to show overlay notice", e));
+          // the overlay may not have its listener up yet right after launch, and emits are not queued
+          setTimeout(() => sendOverlayNotice(notice).catch(() => {}), 1200);
+        })
         .catch((e) => console.warn("Failed to show overlay notice", e));
     });
     const offOpen = isDesktop

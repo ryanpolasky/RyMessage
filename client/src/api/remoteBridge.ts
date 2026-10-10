@@ -96,15 +96,18 @@ export class RemoteBridge implements RyMessageBridge {
   }
 
   getAvatar(url: string): Promise<Blob> {
-    return this.fetchBlob(url);
+    return this.fetchBlob(url, 10_000);
   }
 
-  private async fetchBlob(path: string): Promise<Blob> {
+  private async fetchBlob(path: string, timeoutMs?: number): Promise<Blob> {
     const url = path.startsWith("/") ? `${this.baseUrl}${path}` : path;
     if (new URL(url).origin !== new URL(this.baseUrl).origin) {
       throw new Error("Refusing to send the server token to a different host.");
     }
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` } });
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    });
     if (!res.ok) throw await this.toError(res);
     return res.blob();
   }
