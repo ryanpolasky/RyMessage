@@ -68,9 +68,7 @@ export function useIncomingNotifications(
           const [sender, participants] =
             loaded === timedOut ? [message.sender, conversation.participants] : loaded;
           const notice = { conversation: { ...conversation, participants }, message: { ...message, sender } };
-          sendOverlayNotice(notice).catch((e) => console.warn("Failed to show overlay notice", e));
-          // the overlay may not have its listener up yet right after launch, and emits are not queued
-          setTimeout(() => sendOverlayNotice(notice).catch(() => {}), 1200);
+          return sendOverlayNotice(notice);
         })
         .catch((e) => console.warn("Failed to show overlay notice", e));
     });

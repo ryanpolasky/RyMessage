@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
@@ -17,6 +17,8 @@ const OPEN_EVENT = "overlay-open";
 const DISMISSED_EVENT = "overlay-dismissed";
 const CLEAR_EVENT = "overlay-clear";
 const UPDATE_EVENT = "overlay-update";
+const READY_EVENT = "overlay-ready";
+const READY_TIMEOUT_MS = 5000;
 
 function unlistenLater(pending: Promise<() => void>): () => void {
   return () => {
@@ -24,12 +26,48 @@ function unlistenLater(pending: Promise<() => void>): () => void {
   };
 }
 
-export function sendOverlayNotice(notice: OverlayNotice): Promise<void> {
-  return emitTo("overlay", NOTICE_EVENT, notice);
+let overlayReady: Promise<void> | null = null;
+
+function readyOverlay(): Promise<void> {
+  overlayReady ??= (async () => {
+    let signal = () => {};
+    const ready = new Promise<void>((resolve) => {
+      signal = resolve;
+      setTimeout(resolve, READY_TIMEOUT_MS);
+    });
+    const unlisten = await listen(READY_EVENT, () => signal());
+    try {
+      if (await invoke<boolean>("ensure_overlay")) await ready;
+    } finally {
+      unlisten();
+    }
+  })().catch((e) => {
+    overlayReady = null;
+    throw e;
+  });
+  return overlayReady;
+}
+
+const overlayListeners: Promise<unknown>[] = [];
+
+function overlayListen<T>(event: string, handler: (payload: T) => void): () => void {
+  const pending = listen<T>(event, (e) => handler(e.payload));
+  overlayListeners.push(pending);
+  return unlistenLater(pending);
+}
+
+export async function announceOverlayReady(): Promise<void> {
+  await Promise.all(overlayListeners);
+  await emitTo("main", READY_EVENT);
+}
+
+export async function sendOverlayNotice(notice: OverlayNotice): Promise<void> {
+  await readyOverlay();
+  await emitTo("overlay", NOTICE_EVENT, notice);
 }
 
 export function onOverlayNotice(handler: (notice: OverlayNotice) => void): () => void {
-  return unlistenLater(listen<OverlayNotice>(NOTICE_EVENT, (e) => handler(e.payload)));
+  return overlayListen(NOTICE_EVENT, handler);
 }
 
 export function notifyOverlayDismissed(): Promise<void> {
@@ -40,8 +78,8 @@ export function onOverlayDismissed(handler: () => void): () => void {
   return unlistenLater(listen(DISMISSED_EVENT, handler));
 }
 
-export function requestOverlayClear(): Promise<void> {
-  return emitTo("overlay", CLEAR_EVENT);
+export async function requestOverlayClear(): Promise<void> {
+  if (overlayReady) await emitTo("overlay", CLEAR_EVENT);
 }
 
 export function isWindowFocused(): Promise<boolean> {
@@ -53,15 +91,15 @@ export function onWindowFocusChanged(handler: (focused: boolean) => void): () =>
 }
 
 export function onOverlayClear(handler: () => void): () => void {
-  return unlistenLater(listen(CLEAR_EVENT, handler));
+  return overlayListen(CLEAR_EVENT, handler);
 }
 
-export function sendOverlayUpdate(message: Message): Promise<void> {
-  return emitTo("overlay", UPDATE_EVENT, message);
+export async function sendOverlayUpdate(message: Message): Promise<void> {
+  if (overlayReady) await emitTo("overlay", UPDATE_EVENT, message);
 }
 
 export function onOverlayUpdate(handler: (message: Message) => void): () => void {
-  return unlistenLater(listen<Message>(UPDATE_EVENT, (e) => handler(e.payload)));
+  return overlayListen(UPDATE_EVENT, handler);
 }
 
 export function requestOpenConversation(conversationId: string): Promise<void> {

@@ -1,9 +1,10 @@
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
 const HIDDEN_ARG: &str = "--hidden";
+const OVERLAY_LABEL: &str = "overlay";
 
 fn show_main(app: &AppHandle) {
   let Some(window) = app.get_webview_window("main") else {
@@ -16,9 +17,30 @@ fn show_main(app: &AppHandle) {
   }
 }
 
+// an overlay built during login never reaches the screen, so build it on first use; async because sync window creation deadlocks on Windows
+#[tauri::command]
+async fn ensure_overlay(app: AppHandle) -> Result<bool, String> {
+  if app.get_webview_window(OVERLAY_LABEL).is_some() {
+    return Ok(false);
+  }
+  let config = app
+    .config()
+    .app
+    .windows
+    .iter()
+    .find(|w| w.label == OVERLAY_LABEL)
+    .ok_or("missing overlay window config")?
+    .clone();
+  WebviewWindowBuilder::from_config(&app, &config)
+    .and_then(|builder| builder.build())
+    .map_err(|e| e.to_string())?;
+  Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .invoke_handler(tauri::generate_handler![ensure_overlay])
     .plugin(tauri_plugin_autostart::init(
       MacosLauncher::LaunchAgent,
       Some(vec![HIDDEN_ARG]),

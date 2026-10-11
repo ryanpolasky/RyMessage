@@ -24,6 +24,7 @@
       },
       {
         "label": "overlay",
+        "create": false,
         "title": "RyMessage Overlay",
         "url": "overlay.html",
         "width": 412,
