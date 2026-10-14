@@ -56,3 +56,11 @@ The client deploys as a static site so pushes to `main` redeploy automatically. 
 - Build output directory: `dist`
 
 The hosted page talks directly to the Mac server from the browser; nothing message-related touches the host. Because the page is served over https, the Mac server must also be reachable over https. See `server/README.md` for the `tailscale serve` setup.
+
+## Disclaimer
+
+This is an independent personal project. It is not affiliated with, endorsed by, sponsored by, or associated with Apple Inc. in any way. Apple, iMessage, Messages, HomeKit, Apple Home, HomePod, Mac, and macOS are trademarks of Apple Inc., registered in the U.S. and other countries; all rights to them belong to Apple. Any use of these names is only to describe what this software works with.
+
+I built this on my own time, on my own personal equipment, at my own expense, for my own personal use. It doesn't use, contain, or derive from any confidential information, code, or resources belonging to Apple or any employer. No Apple artwork, icons, or other assets are included.
+
+Provided as-is, with no warranty. Use at your own risk.
