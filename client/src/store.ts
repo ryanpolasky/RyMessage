@@ -3,6 +3,7 @@ import type { ConnectionStatus, RyMessageBridge } from "./api/bridge";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "./api/types";
 
 const PAGE_SIZE = 100;
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const PINS_KEY = "rymessage.pins";
 const READ_KEY = "rymessage.readThrough";
 const HIDDEN_KEY = "rymessage.hidden";
@@ -317,7 +318,9 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
         url: URL.createObjectURL(file),
       };
       send(conversationId, null, [preview], null, (clientId) =>
-        bridge.sendAttachment(conversationId, clientId, file)
+        file.size > MAX_ATTACHMENT_BYTES
+          ? Promise.reject(new Error(`${file.name} is over the 100 MB attachment limit.`))
+          : bridge.sendAttachment(conversationId, clientId, file)
       );
     },
     [bridge, send]

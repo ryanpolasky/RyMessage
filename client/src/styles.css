@@ -1045,6 +1045,7 @@ body {
   position: relative;
   flex: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   border: 1px solid var(--border);
   border-radius: 15px;
@@ -1054,7 +1055,8 @@ body {
 }
 
 .composer-field textarea {
-  flex: 1;
+  flex: 1 1 100%;
+  min-width: 0;
   border: none;
   outline: none;
   resize: none;
@@ -1068,6 +1070,76 @@ body {
 
 .composer-field textarea::placeholder {
   color: var(--text-secondary);
+}
+
+.composer-staged {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 6px;
+}
+
+.staged-item {
+  position: relative;
+  height: 72px;
+  min-width: 72px;
+  max-width: 160px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--search-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: menu-in 0.12s ease-out;
+}
+
+.staged-item img,
+.staged-item video {
+  height: 100%;
+  max-width: 160px;
+  object-fit: cover;
+  display: block;
+}
+
+.staged-play {
+  position: absolute;
+  color: #ffffff;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+  pointer-events: none;
+}
+
+.staged-item.file {
+  padding: 0 12px;
+  width: 140px;
+}
+
+.staged-name {
+  font-size: 11.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.staged-remove:hover {
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .send-button {

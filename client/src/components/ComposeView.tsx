@@ -207,6 +207,8 @@ export function ComposeView({
         canSendText={canCompose}
         canAttach={false}
         replyTargetId={null}
+        staged={[]}
+        onStagedChange={() => {}}
         onCancelReply={() => {}}
         onSendText={send}
         onSendFile={() => {}}

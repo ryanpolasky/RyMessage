@@ -3,7 +3,8 @@ import { useRef, useState } from "react";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
 import { attachmentLabel } from "../utils/attachments";
 import { ConversationAvatar } from "./Avatar";
-import { Composer } from "./Composer";
+import type { StagedFile } from "./Composer";
+import { Composer, stageFiles } from "./Composer";
 import { MessageList } from "./MessageList";
 
 interface ChatViewProps {
@@ -35,6 +36,9 @@ export function ChatView({
 }: ChatViewProps) {
   const [reply, setReply] = useState<{ conversationId: string; message: Message } | null>(null);
   const replyingTo = reply?.conversationId === conversation.id ? reply.message : null;
+  const [stagedFor, setStagedFor] = useState<{ conversationId: string; files: StagedFile[] } | null>(null);
+  const staged = stagedFor?.conversationId === conversation.id ? stagedFor.files : [];
+  const setStaged = (files: StagedFile[]) => setStagedFor({ conversationId: conversation.id, files });
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const canDrop = (capabilities?.attachments ?? false) && messages !== undefined;
@@ -74,11 +78,11 @@ export function ChatView({
         if (!carriesFiles(e)) return;
         e.preventDefault();
         endDrag();
-        for (const item of Array.from(e.dataTransfer.items)) {
-          if (item.kind !== "file" || item.webkitGetAsEntry()?.isDirectory) continue;
-          const file = item.getAsFile();
-          if (file) onSendFile(file);
-        }
+        const files = Array.from(e.dataTransfer.items)
+          .filter((item) => item.kind === "file" && !item.webkitGetAsEntry()?.isDirectory)
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => file !== null);
+        if (files.length) setStaged(stageFiles(staged, files));
       }}
     >
       {dragging && (
@@ -88,7 +92,7 @@ export function ChatView({
               <path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M4 14.5v3A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-3" strokeLinecap="round" />
             </svg>
-            <span>Send to {title}</span>
+            <span>Add to Message</span>
           </div>
         </div>
       )}
@@ -152,6 +156,8 @@ export function ChatView({
         canSendText={capabilities?.sendText ?? false}
         canAttach={capabilities?.attachments ?? false}
         replyTargetId={replyingTo?.id ?? null}
+        staged={staged}
+        onStagedChange={setStaged}
         onCancelReply={() => setReply(null)}
         onSendText={(text) => {
           onSendText(text, replyingTo?.id ?? null);

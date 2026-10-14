@@ -4,6 +4,11 @@ import type { EmojiIndex } from "../emoji";
 import { loadEmojiIndex } from "../emoji";
 import { EmojiPicker } from "./EmojiPicker";
 
+export interface StagedFile {
+  id: string;
+  file: File;
+}
+
 interface ComposerProps {
   conversationId: string;
   service: Service;
@@ -11,9 +16,50 @@ interface ComposerProps {
   canSendText: boolean;
   canAttach: boolean;
   replyTargetId: string | null;
+  staged: StagedFile[];
+  onStagedChange: (staged: StagedFile[]) => void;
   onCancelReply: () => void;
   onSendText: (text: string) => void;
   onSendFile: (file: File) => void;
+}
+
+export function stageFiles(staged: StagedFile[], files: File[]): StagedFile[] {
+  return [...staged, ...files.map((file) => ({ id: crypto.randomUUID(), file }))];
+}
+
+function StagedPreview({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const kind = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : "file";
+
+  useEffect(() => {
+    if (kind === "file") return;
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file, kind]);
+
+  return (
+    <div className={`staged-item ${kind}`} title={file.name}>
+      {kind === "image" && url && <img src={url} alt="" />}
+      {kind === "video" && url && <video src={url} muted preload="metadata" />}
+      {kind === "video" && (
+        <svg className="staged-play" viewBox="0 0 16 16" width="18" height="18">
+          <path d="M5 3.5v9l7.5-4.5z" fill="currentColor" />
+        </svg>
+      )}
+      {kind === "file" && <span className="staged-name">{file.name}</span>}
+      <button
+        className="staged-remove"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRemove}
+        title="Remove"
+      >
+        <svg viewBox="0 0 16 16" width="8" height="8">
+          <path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
+  );
 }
 
 interface CodeAutocomplete {
@@ -33,6 +79,8 @@ export function Composer({
   canSendText,
   canAttach,
   replyTargetId,
+  staged,
+  onStagedChange,
   onCancelReply,
   onSendText,
   onSendFile,
@@ -61,10 +109,18 @@ export function Composer({
     if (replyTargetId) inputRef.current?.focus();
   }, [replyTargetId]);
 
+  useEffect(() => {
+    if (staged.length) inputRef.current?.focus();
+  }, [staged.length]);
+
+  const sendableText = canSendText ? text.trim() : "";
+
   function send() {
-    const trimmed = text.trim();
-    if (!trimmed || !ready) return;
-    onSendText(trimmed);
+    if (!ready || (!sendableText && !staged.length)) return;
+    for (const { file } of staged) onSendFile(file);
+    if (staged.length) onStagedChange([]);
+    if (!sendableText) return;
+    onSendText(sendableText);
     setText("");
     setAc(null);
     resize("");
@@ -167,10 +223,11 @@ export function Composer({
           <input
             ref={fileRef}
             type="file"
+            multiple
             hidden
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onSendFile(file);
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) onStagedChange(stageFiles(staged, files));
               e.target.value = "";
             }}
           />
@@ -204,6 +261,17 @@ export function Composer({
         </div>
       )}
       <div className="composer-field">
+        {staged.length > 0 && (
+          <div className="composer-staged">
+            {staged.map((item) => (
+              <StagedPreview
+                key={item.id}
+                file={item.file}
+                onRemove={() => onStagedChange(staged.filter((s) => s.id !== item.id))}
+              />
+            ))}
+          </div>
+        )}
         <textarea
           ref={inputRef}
           rows={1}
@@ -225,7 +293,7 @@ export function Composer({
             const files = Array.from(e.clipboardData.files);
             if (!files.length) return;
             e.preventDefault();
-            for (const file of files) onSendFile(pastedFile(file));
+            onStagedChange(stageFiles(staged, files.map(pastedFile)));
           }}
           onKeyDown={(e) => {
             if (ac) {
@@ -278,7 +346,7 @@ export function Composer({
           </div>
         )}
         <button
-          className={`send-button ${text.trim() && canSendText ? "visible" : ""}`}
+          className={`send-button ${sendableText || staged.length ? "visible" : ""}`}
           onClick={send}
           title="Send"
         >
