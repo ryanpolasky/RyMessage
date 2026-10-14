@@ -30,6 +30,19 @@ export function App() {
     );
   }, []);
 
+  // a file dropped anywhere the chat doesn't handle it would navigate the app to that file
+  useEffect(() => {
+    const block = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    return () => {
+      window.removeEventListener("dragover", block);
+      window.removeEventListener("drop", block);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isDesktop || !settings.minimizeToTray) return;
     return hideOnMinimize();

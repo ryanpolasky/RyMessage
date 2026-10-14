@@ -20,6 +20,7 @@
         "minHeight": 480,
         "center": true,
         "visible": false,
+        "dragDropEnabled": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       },
       {

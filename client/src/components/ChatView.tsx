@@ -1,4 +1,5 @@
-import { useState } from "react";
+import type { DragEvent } from "react";
+import { useRef, useState } from "react";
 import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
 import { attachmentLabel } from "../utils/attachments";
 import { ConversationAvatar } from "./Avatar";
@@ -34,16 +35,63 @@ export function ChatView({
 }: ChatViewProps) {
   const [reply, setReply] = useState<{ conversationId: string; message: Message } | null>(null);
   const replyingTo = reply?.conversationId === conversation.id ? reply.message : null;
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const canDrop = (capabilities?.attachments ?? false) && messages !== undefined;
 
   const title =
     conversation.displayName ??
     conversation.participants.map((p) => p.displayName ?? p.handle).join(", ");
+
+  const carriesFiles = (e: DragEvent) => canDrop && e.dataTransfer.types.includes("Files");
+  const endDrag = () => {
+    dragDepth.current = 0;
+    setDragging(false);
+  };
   const replyName = replyingTo?.isFromMe
     ? "Yourself"
     : (replyingTo?.sender?.displayName ?? replyingTo?.sender?.handle ?? title);
 
   return (
-    <section className="chat-view">
+    <section
+      className="chat-view"
+      onDragEnter={(e) => {
+        if (!carriesFiles(e)) return;
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!carriesFiles(e)) return;
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) endDrag();
+      }}
+      onDrop={(e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        endDrag();
+        for (const item of Array.from(e.dataTransfer.items)) {
+          if (item.kind !== "file" || item.webkitGetAsEntry()?.isDirectory) continue;
+          const file = item.getAsFile();
+          if (file) onSendFile(file);
+        }
+      }}
+    >
+      {dragging && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-card">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4 14.5v3A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-3" strokeLinecap="round" />
+            </svg>
+            <span>Send to {title}</span>
+          </div>
+        </div>
+      )}
       <header className="chat-header">
         <ConversationAvatar conversation={conversation} size={36} />
         <span className="chat-header-name">{title}</span>
