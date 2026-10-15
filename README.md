@@ -15,6 +15,10 @@ A Windows iMessage client backed by a companion server running on macOS. The Mac
 
 Prefer a private network between the two machines, such as Tailscale. If the server advertises the wrong address for pairing, set `advertisedHost` in `~/.rymessage/config.json`.
 
+## Limitations
+
+Incoming tapbacks, threaded replies, message edits, and unsends are read from `chat.db` and displayed in the client, but sending tapbacks or inline replies and editing or unsending your own messages from Windows aren't supported yet (`Messages.app` doesn't expose those actions via AppleScript).
+
 ## Development
 
 ### Client
