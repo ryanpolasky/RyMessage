@@ -10,12 +10,35 @@ interface Playing {
 
 let context: AudioContext | null = null;
 let current: Playing | null = null;
+let playSeq = 0;
 const buffers = new Map<string, Promise<AudioBuffer | null>>();
 
 export function audioContext(): AudioContext {
-  context ??= new AudioContext();
+  if (!context || context.state === "closed") context = new AudioContext();
   if (context.state === "suspended") void context.resume();
   return context;
+}
+
+async function readyAudioContext(): Promise<AudioContext> {
+  let ctx = audioContext();
+  if (ctx.state === "running") return ctx;
+  const resumed = await Promise.race([
+    ctx.resume().then(
+      () => true,
+      () => false
+    ),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 800)),
+  ]);
+  if (!resumed) {
+    ctx.close().catch(() => {});
+    context = new AudioContext();
+    ctx = context;
+    await Promise.race([
+      ctx.resume().catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 800)),
+    ]);
+  }
+  return ctx;
 }
 
 export function decodeAudio(data: ArrayBuffer): Promise<AudioBuffer> {
@@ -48,8 +71,7 @@ function track(out: GainNode, sources: AudioScheduledSourceNode[]) {
   }
 }
 
-function playChime() {
-  const ctx = audioContext();
+function playChime(ctx: AudioContext) {
   const now = ctx.currentTime;
   const out = ctx.createGain();
   out.gain.value = 0.2;
@@ -81,8 +103,7 @@ function playChime() {
   track(out, sources);
 }
 
-function playBuffer(buffer: AudioBuffer) {
-  const ctx = audioContext();
+function playBuffer(ctx: AudioContext, buffer: AudioBuffer) {
   const out = ctx.createGain();
   out.connect(ctx.destination);
   const source = ctx.createBufferSource();
@@ -93,6 +114,7 @@ function playBuffer(buffer: AudioBuffer) {
 }
 
 export function stopNotificationSound(): void {
+  playSeq += 1;
   if (!current || !context) return;
   const { out, sources } = current;
   current = null;
@@ -106,14 +128,24 @@ export function stopNotificationSound(): void {
 export async function playNotificationSound(choice: string): Promise<void> {
   stopNotificationSound();
   if (choice === SILENT) return;
-  if (choice === CHIME) return playChime();
-  const buffer = await loadBuffer(choice).catch((e) => {
-    console.warn("Failed to load notification sound", e);
-    return null;
-  });
+  const seq = playSeq;
+  if (choice === CHIME) {
+    const ctx = await readyAudioContext();
+    if (seq === playSeq) playChime(ctx);
+    return;
+  }
+  const [ctx, buffer] = await Promise.all([
+    readyAudioContext(),
+    loadBuffer(choice).catch((e) => {
+      console.warn("Failed to load notification sound", e);
+      return null;
+    }),
+  ]);
+  if (seq !== playSeq) return;
   if (!buffer) {
     console.warn("Selected notification sound is missing; playing the chime instead");
-    return playChime();
+    playChime(ctx);
+    return;
   }
-  playBuffer(buffer);
+  playBuffer(ctx, buffer);
 }

@@ -195,7 +195,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
     const offStatus = bridge.onStatus((next) => {
       setStatus(next);
       if (next !== "online") return;
-      if (wasOnline) {
+      if (wasOnline || conversationsRef.current !== null) {
         loadConversations();
         const id = selectedIdRef.current;
         setMessages((cur) => (id && cur[id] ? { [id]: cur[id] } : {}));
@@ -215,6 +215,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
         });
         return;
       }
+      if (event.type !== "messageCreated" && event.type !== "messageUpdated") return;
       applyMessage(event.message);
       if (
         event.type === "messageCreated" &&
@@ -386,6 +387,7 @@ export function useRyMessageStore(bridge: RyMessageBridge) {
   return {
     capabilities,
     conversations: effectiveConversations,
+    conversationsReady: conversations !== null,
     conversationsLoading: conversations === null && loadError === null,
     loadError,
     retryLoad: loadConversations,

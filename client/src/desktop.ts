@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { Conversation, Message } from "./api/types";
@@ -17,8 +17,6 @@ const OPEN_EVENT = "overlay-open";
 const DISMISSED_EVENT = "overlay-dismissed";
 const CLEAR_EVENT = "overlay-clear";
 const UPDATE_EVENT = "overlay-update";
-const READY_EVENT = "overlay-ready";
-const READY_TIMEOUT_MS = 5000;
 
 function unlistenLater(pending: Promise<() => void>): () => void {
   return () => {
@@ -26,48 +24,36 @@ function unlistenLater(pending: Promise<() => void>): () => void {
   };
 }
 
-let overlayReady: Promise<void> | null = null;
-
-function readyOverlay(): Promise<void> {
-  overlayReady ??= (async () => {
-    let signal = () => {};
-    const ready = new Promise<void>((resolve) => {
-      signal = resolve;
-      setTimeout(resolve, READY_TIMEOUT_MS);
-    });
-    const unlisten = await listen(READY_EVENT, () => signal());
-    try {
-      if (await invoke<boolean>("ensure_overlay")) await ready;
-    } finally {
-      unlisten();
-    }
-  })().catch((e) => {
-    overlayReady = null;
-    throw e;
-  });
-  return overlayReady;
-}
-
-const overlayListeners: Promise<unknown>[] = [];
+const overlayListeners = new Set<Promise<unknown>>();
+let noticeListener: ((notice: OverlayNotice) => void) | null = null;
 
 function overlayListen<T>(event: string, handler: (payload: T) => void): () => void {
   const pending = listen<T>(event, (e) => handler(e.payload));
-  overlayListeners.push(pending);
-  return unlistenLater(pending);
+  overlayListeners.add(pending);
+  return () => {
+    overlayListeners.delete(pending);
+    pending.then((unlisten) => unlisten());
+  };
 }
 
-export async function announceOverlayReady(): Promise<void> {
+export async function announceOverlayReady(isCancelled: () => boolean): Promise<void> {
   await Promise.all(overlayListeners);
-  await emitTo("main", READY_EVENT);
+  if (isCancelled()) return;
+  const queued = await invoke<OverlayNotice[]>("overlay_ready");
+  for (const notice of queued) noticeListener?.(notice);
 }
 
-export async function sendOverlayNotice(notice: OverlayNotice): Promise<void> {
-  await readyOverlay();
-  await emitTo("overlay", NOTICE_EVENT, notice);
+export function sendOverlayNotice(notice: OverlayNotice): Promise<void> {
+  return invoke("post_overlay_notice", { notice });
 }
 
 export function onOverlayNotice(handler: (notice: OverlayNotice) => void): () => void {
-  return overlayListen(NOTICE_EVENT, handler);
+  noticeListener = handler;
+  const off = overlayListen(NOTICE_EVENT, handler);
+  return () => {
+    if (noticeListener === handler) noticeListener = null;
+    off();
+  };
 }
 
 export function notifyOverlayDismissed(): Promise<void> {
@@ -78,12 +64,19 @@ export function onOverlayDismissed(handler: () => void): () => void {
   return unlistenLater(listen(DISMISSED_EVENT, handler));
 }
 
-export async function requestOverlayClear(): Promise<void> {
-  if (overlayReady) await emitTo("overlay", CLEAR_EVENT);
+export function requestOverlayClear(): Promise<void> {
+  return invoke("clear_overlay");
 }
 
-export function isWindowFocused(): Promise<boolean> {
-  return isDesktop ? getCurrentWindow().isFocused() : Promise.resolve(document.hasFocus());
+export async function isMainWindowActive(): Promise<boolean> {
+  if (!isDesktop) return document.visibilityState === "visible" && document.hasFocus();
+  const window = getCurrentWindow();
+  const [visible, minimized, focused] = await Promise.all([
+    window.isVisible(),
+    window.isMinimized(),
+    window.isFocused(),
+  ]);
+  return visible && !minimized && focused;
 }
 
 export function onWindowFocusChanged(handler: (focused: boolean) => void): () => void {
@@ -94,8 +87,8 @@ export function onOverlayClear(handler: () => void): () => void {
   return overlayListen(CLEAR_EVENT, handler);
 }
 
-export async function sendOverlayUpdate(message: Message): Promise<void> {
-  if (overlayReady) await emitTo("overlay", UPDATE_EVENT, message);
+export function sendOverlayUpdate(message: Message): Promise<void> {
+  return invoke("update_overlay", { message });
 }
 
 export function onOverlayUpdate(handler: (message: Message) => void): () => void {
@@ -118,11 +111,8 @@ export function onOpenConversation(handler: (conversationId: string) => void): (
   );
 }
 
-export async function fitOverlayWindow(width: number, height: number): Promise<void> {
-  const window = getCurrentWindow();
-  if (height === 0) return window.hide();
-  await window.setSize(new LogicalSize(width, height));
-  await window.show();
+export function fitOverlayWindow(width: number, height: number): Promise<void> {
+  return invoke("sync_overlay_window", { width, height });
 }
 
 // the overlay can never take focus, and the web clipboard API refuses unfocused pages

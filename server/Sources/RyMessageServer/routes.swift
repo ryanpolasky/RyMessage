@@ -118,6 +118,15 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
     let onUpgrade: @Sendable (Request, WebSocket) -> Void = { req, socket in
         socket.pingInterval = .seconds(25)
         if req.headers.bearerAuthorization?.token == token {
+            socket.onText { socket, text in
+                if let data = text.data(using: .utf8),
+                   let frame = try? JSONDecoder().decode(SocketFrame.self, from: data),
+                   frame.type == "ping",
+                   frame.pong == true
+                {
+                    socket.send(#"{"type":"pong"}"#)
+                }
+            }
             Task { await hub.add(socket) }
             return
         }
@@ -128,27 +137,44 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
             }
         }
         socket.onText { socket, text in
-            if state.authenticated { return }
             guard let data = text.data(using: .utf8),
-                  let auth = try? JSONDecoder().decode(SocketAuth.self, from: data),
-                  auth.type == "auth",
-                  auth.token == token
+                  let frame = try? JSONDecoder().decode(SocketFrame.self, from: data)
             else {
+                if !state.authenticated {
+                    timeout.cancel()
+                    _ = socket.close(code: .policyViolation)
+                }
+                return
+            }
+            if state.authenticated {
+                if frame.type == "ping", frame.pong == true {
+                    socket.send(#"{"type":"pong"}"#)
+                }
+                return
+            }
+            guard frame.type == "auth", frame.token == token else {
                 timeout.cancel()
                 _ = socket.close(code: .policyViolation)
                 return
             }
             state.authenticated = true
             timeout.cancel()
-            Task { await hub.add(socket) }
+            let replyPong = frame.pong == true
+            Task {
+                await hub.add(socket)
+                if replyPong {
+                    socket.eventLoop.execute { socket.send(#"{"type":"pong"}"#) }
+                }
+            }
         }
     }
     app.grouped("v1").webSocket("events", onUpgrade: onUpgrade)
 }
 
-private struct SocketAuth: Decodable {
+private struct SocketFrame: Decodable {
     let type: String
-    let token: String
+    let token: String?
+    let pong: Bool?
 }
 
 // only read and written on the socket's event loop, where the upgrade, timeout, and text callbacks all run

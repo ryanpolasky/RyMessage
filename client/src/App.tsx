@@ -81,6 +81,7 @@ function Messenger({
   useIncomingNotifications(
     bridge,
     store.conversations,
+    store.conversationsReady,
     settings,
     store.selectConversation
   );

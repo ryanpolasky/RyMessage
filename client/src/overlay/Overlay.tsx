@@ -261,7 +261,7 @@ export function Overlay({
 
   useLayoutEffect(() => {
     const root = rootRef.current!;
-    const report = () => onResize(cards.length === 0 ? 0 : Math.ceil(root.offsetHeight));
+    const report = () => onResize(cards.length === 0 ? 0 : Math.max(1, Math.ceil(root.offsetHeight)));
     report();
     const observer = new ResizeObserver(report);
     observer.observe(root);

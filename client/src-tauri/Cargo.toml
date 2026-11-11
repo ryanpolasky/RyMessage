@@ -1,6 +1,6 @@
 [package]
 name = "rymessage"
-version = "0.2.5"
+version = "0.2.6"
 description = "RyMessage desktop client"
 edition = "2021"
 rust-version = "1.77.2"
@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "~2.6.3", features = [] }
 
 [dependencies]
+serde_json = "1.0"
 tauri = { version = "~2.11.6", features = ["tray-icon"] }
 tauri-plugin-autostart = "~2.5.1"
 tauri-plugin-clipboard-manager = "~2.3.3"

@@ -53,7 +53,12 @@ function OverlayApp() {
   const [settings] = useSettings();
   const ttlMs = settings.dismissAfterSeconds === 0 ? null : settings.dismissAfterSeconds * 1000;
   useEffect(() => {
-    if (isDesktop) announceOverlayReady().catch((e) => console.warn("Failed to announce overlay", e));
+    if (!isDesktop) return;
+    let cancelled = false;
+    announceOverlayReady(() => cancelled).catch((e) => console.warn("Failed to announce overlay", e));
+    return () => {
+      cancelled = true;
+    };
   }, []);
   if (!isDesktop) {
     return (

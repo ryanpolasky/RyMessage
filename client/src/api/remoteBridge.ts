@@ -11,9 +11,12 @@ import type {
 
 const POLICY_VIOLATION = 1008;
 const WATCHDOG_MS = 15_000;
-const SLEEP_GAP_MS = 60_000;
+const SLEEP_GAP_MS = 90_000;
+const CONNECT_TIMEOUT_MS = 15_000;
+const PONG_TIMEOUT_MS = 10_000;
 const PING_STALE_MS = 20_000;
-const PING_FRAME = '{"type":"ping"}';
+const RECONNECT_MAX_MS = 10_000;
+const PING_FRAME = '{"type":"ping","pong":true}';
 
 export class RemoteBridge implements RyMessageBridge {
   private listeners = new Set<(event: BridgeEvent) => void>();
@@ -22,9 +25,12 @@ export class RemoteBridge implements RyMessageBridge {
   private socket: WebSocket | null = null;
   private reconnectDelay = 1000;
   private reconnectTimer: number | null = null;
+  private onlineTimer: number | null = null;
   private watchdog: number | null = null;
+  private connectStartedAt = 0;
   private lastTickAt = 0;
   private pingSentAt = 0;
+  private pongSupported = false;
 
   constructor(
     private baseUrl: string,
@@ -132,10 +138,15 @@ export class RemoteBridge implements RyMessageBridge {
       clearInterval(this.watchdog);
       this.watchdog = null;
       window.removeEventListener("online", this.onBackOnline);
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
     }
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.onlineTimer !== null) {
+      clearTimeout(this.onlineTimer);
+      this.onlineTimer = null;
     }
     const socket = this.socket;
     this.socket = null;
@@ -179,15 +190,24 @@ export class RemoteBridge implements RyMessageBridge {
     this.dropSocket();
   };
 
+  private onVisibilityChange = () => {
+    if (document.visibilityState === "visible") this.checkSocket();
+  };
+
   private startWatchdog() {
     if (this.watchdog !== null) return;
     this.lastTickAt = Date.now();
     this.watchdog = window.setInterval(() => this.checkSocket(), WATCHDOG_MS);
     window.addEventListener("online", this.onBackOnline);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
   }
 
   // a half-dead socket never fires onclose, so we drop it and start fresh; the stale guard ignores its late close
   private dropSocket() {
+    if (this.onlineTimer !== null) {
+      clearTimeout(this.onlineTimer);
+      this.onlineTimer = null;
+    }
     const socket = this.socket;
     this.socket = null;
     this.pingSentAt = 0;
@@ -200,45 +220,87 @@ export class RemoteBridge implements RyMessageBridge {
     const slept = now - this.lastTickAt > SLEEP_GAP_MS;
     this.lastTickAt = now;
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      this.pingSentAt = 0;
-      return;
-    }
+    if (!socket) return;
     if (slept) {
       this.dropSocket();
       return;
     }
+    if (socket.readyState === WebSocket.CONNECTING) {
+      if (now - this.connectStartedAt > CONNECT_TIMEOUT_MS) this.dropSocket();
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.pingSentAt = 0;
+      return;
+    }
     if (this.pingSentAt !== 0) {
-      if (socket.bufferedAmount === 0) {
-        this.pingSentAt = 0;
-      } else if (now - this.pingSentAt > PING_STALE_MS) {
+      if (now - this.pingSentAt < PONG_TIMEOUT_MS) return;
+      if (this.pongSupported) {
         this.dropSocket();
         return;
       }
+      if (socket.bufferedAmount > 0 && now - this.pingSentAt > PING_STALE_MS) {
+        this.dropSocket();
+        return;
+      }
+      this.pingSentAt = 0;
+      fetch(`${this.baseUrl}/v1/capabilities`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+        signal: AbortSignal.timeout(8_000),
+      }).catch(() => {
+        if (this.socket === socket) this.dropSocket();
+      });
+      return;
     }
-    if (this.pingSentAt === 0) {
+    try {
       socket.send(PING_FRAME);
       this.pingSentAt = now;
+    } catch {
+      this.dropSocket();
     }
   }
 
   private connect() {
     this.reconnectTimer = null;
+    if (this.onlineTimer !== null) {
+      clearTimeout(this.onlineTimer);
+      this.onlineTimer = null;
+    }
     this.setStatus("connecting");
     this.pingSentAt = 0;
+    this.pongSupported = false;
+    this.connectStartedAt = Date.now();
     const socket = new WebSocket(`${this.baseUrl.replace(/^http/, "ws")}/v1/events`);
     this.socket = socket;
     socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "auth", token: this.token }));
-      this.reconnectDelay = 1000;
-      this.setStatus("online");
+      if (this.socket !== socket) return;
+      socket.send(JSON.stringify({ type: "auth", token: this.token, pong: true }));
+      this.onlineTimer = window.setTimeout(() => {
+        this.onlineTimer = null;
+        if (this.socket === socket && socket.readyState === WebSocket.OPEN) {
+          this.reconnectDelay = 1000;
+          this.setStatus("online");
+        }
+      }, 500);
     };
     socket.onmessage = (raw) => {
-      let event: BridgeEvent;
+      if (this.socket !== socket) return;
+      this.pingSentAt = 0;
+      let event: BridgeEvent | { type: "pong" };
       try {
         event = JSON.parse(raw.data);
       } catch {
         console.warn("Ignoring malformed event frame");
+        return;
+      }
+      if (event.type === "pong") {
+        this.pongSupported = true;
+        if (this.onlineTimer !== null) {
+          clearTimeout(this.onlineTimer);
+          this.onlineTimer = null;
+        }
+        this.reconnectDelay = 1000;
+        this.setStatus("online");
         return;
       }
       for (const listener of this.listeners) listener(event);
@@ -247,13 +309,17 @@ export class RemoteBridge implements RyMessageBridge {
     socket.onclose = (e) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      if (this.onlineTimer !== null) {
+        clearTimeout(this.onlineTimer);
+        this.onlineTimer = null;
+      }
       if (e.code === POLICY_VIOLATION) {
         this.setStatus("unauthorized");
         return;
       }
       this.setStatus("offline");
       this.reconnectTimer = window.setTimeout(() => this.connect(), this.reconnectDelay);
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
     };
   }
 }

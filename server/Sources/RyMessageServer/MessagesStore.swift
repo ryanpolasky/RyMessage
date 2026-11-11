@@ -31,6 +31,7 @@ actor MessagesStore {
         cmj.chat_id AS chat_id
         """
     private static let pendingTimeout: TimeInterval = 60
+    private static let deferredTimeout: TimeInterval = 15
     private static let statusWindow: Int64 = 400
     private static let editWindow: Int64 = 2000
 
@@ -47,6 +48,7 @@ actor MessagesStore {
     private var participants: [Int64: Participant] = [:]
     private var chatGroups: [Int64: [Int64]] = [:]
     private var lastRowID: Int64?
+    private var deferredRows: [Int64: Date] = [:]
     private var outgoingSignatures: [String: String] = [:]
     private var editMarks: [String: String] = [:]
     private var pending: [String: [Pending]] = [:]
@@ -182,7 +184,13 @@ actor MessagesStore {
         sql += " ORDER BY m.date DESC LIMIT ?"
         parameters.append(.int(Int64(max(1, min(limit, 200)))))
         let rows = try connection().query(sql, parameters)
-        return try build(rows, chatIds: chatIds, chatService: Self.service(primary.string("service")))
+        let fallback = primary.int("style") == 45 ? primary.string("identifier") : nil
+        return try build(
+            rows,
+            chatIds: chatIds,
+            chatService: Self.service(primary.string("service")),
+            fallbackHandle: fallback
+        )
     }
 
     func attachmentFile(id: String) throws -> AttachmentFile {
@@ -272,33 +280,59 @@ actor MessagesStore {
             return events
         }
 
-        let rows = try db.query(
-            "SELECT \(Self.messageColumns) FROM message m JOIN chat_message_join cmj ON cmj.message_id = m.ROWID WHERE m.ROWID > ? ORDER BY m.ROWID ASC LIMIT 500",
+        let now = Date()
+        deferredRows = deferredRows.filter { now.timeIntervalSince($0.value) < Self.deferredTimeout }
+        let unseen = try db.query(
+            "SELECT ROWID AS rowid FROM message WHERE ROWID > ? ORDER BY ROWID ASC LIMIT 500",
             [.int(last)]
-        )
-        var newest = last
+        ).compactMap { $0.int("rowid") }
+        let newest = unseen.last.map { max(last, $0) } ?? last
+        for rowid in unseen where deferredRows[rowid] == nil {
+            deferredRows[rowid] = now
+        }
+        let candidates = Array(deferredRows.keys.sorted().suffix(500))
+        let rows: [SQLiteRow]
+        if candidates.isEmpty {
+            rows = []
+        } else {
+            rows = try db.query(
+                "SELECT \(Self.messageColumns) FROM message m JOIN chat_message_join cmj ON cmj.message_id = m.ROWID WHERE m.ROWID IN (\(Self.placeholders(candidates.count))) ORDER BY m.ROWID ASC",
+                candidates.map { .int($0) }
+            )
+        }
         var touched: [[Int64]] = []
         var reactionTargets: [String] = []
         var created = Set<String>()
         for row in rows {
-            guard let rowid = row.int("rowid"), let chatId = row.int("chat_id") else { continue }
-            newest = max(newest, rowid)
+            guard let rowid = row.int("rowid"),
+                  deferredRows[rowid] != nil,
+                  let chatId = row.int("chat_id")
+            else { continue }
             let ids = try group(for: chatId)
             let type = row.int("associated_type") ?? 0
             if (2000...3005).contains(type), let target = row.string("associated_guid") {
+                deferredRows.removeValue(forKey: rowid)
                 let guid = Self.targetGuid(target)
                 if !reactionTargets.contains(guid) { reactionTargets.append(guid) }
             } else if type == 0, row.int("item_type") == 0 {
                 let primary = try primaryChat(ids)
-                guard var message = try build([row], chatIds: ids, chatService: Self.service(primary.string("service"))).first else {
+                let fallback = primary.int("style") == 45 ? primary.string("identifier") : nil
+                guard var message = try build(
+                    [row],
+                    chatIds: ids,
+                    chatService: Self.service(primary.string("service")),
+                    fallbackHandle: fallback
+                ).first else {
                     continue
                 }
+                deferredRows.removeValue(forKey: rowid)
                 if message.isFromMe {
                     message.clientId = claimPending(conversationId: message.conversationId, text: message.text)
                 }
                 created.insert(message.id)
                 events.append(.messageCreated(message))
             } else {
+                deferredRows.removeValue(forKey: rowid)
                 continue
             }
             if !touched.contains(ids) { touched.append(ids) }
@@ -391,7 +425,13 @@ actor MessagesStore {
         ).first, let chatId = row.int("chat_id") else { return nil }
         let ids = try group(for: chatId)
         let primary = try primaryChat(ids)
-        return try build([row], chatIds: ids, chatService: Self.service(primary.string("service"))).first
+        let fallback = primary.int("style") == 45 ? primary.string("identifier") : nil
+        return try build(
+            [row],
+            chatIds: ids,
+            chatService: Self.service(primary.string("service")),
+            fallbackHandle: fallback
+        ).first
     }
 
     // the chat with the newest message decides the service and where sends go
@@ -408,9 +448,16 @@ actor MessagesStore {
         return row
     }
 
-    private func build(_ rows: [SQLiteRow], chatIds: [Int64], chatService: Service?) throws -> [Message] {
+    private func build(
+        _ rows: [SQLiteRow],
+        chatIds: [Int64],
+        chatService: Service?,
+        fallbackHandle: String? = nil
+    ) throws -> [Message] {
         let conversationId = Self.conversationId(chatIds)
-        let withFiles = rows.filter { $0.int("has_attachments") == 1 }.compactMap { $0.int("rowid") }
+        let withFiles = rows
+            .filter { $0.int("has_attachments") == 1 || Self.messageText($0) == nil }
+            .compactMap { $0.int("rowid") }
         let files = try attachments(for: withFiles)
         let oldest = rows.compactMap { $0.int("date") }.min() ?? 0
         let tapbacks = try reactions(chatIds: chatIds, since: oldest, targets: Set(rows.compactMap { $0.string("guid") }))
@@ -421,7 +468,7 @@ actor MessagesStore {
             let unsent = text == nil && Self.isRetracted(row)
             let attached = unsent ? [] : files[rowid] ?? []
             if !unsent && text == nil && attached.isEmpty { return nil }
-            let sender = try fromMe ? nil : participant(row.int("handle_id") ?? 0)
+            let sender = try fromMe ? nil : (participant(row.int("handle_id") ?? 0) ?? fallbackHandle.map(directParticipant))
             return Message(
                 id: guid,
                 conversationId: conversationId,
