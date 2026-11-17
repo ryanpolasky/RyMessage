@@ -89,6 +89,7 @@ function Messenger({
     (attachment: Attachment) => bridge.getAttachment(attachment),
     [bridge]
   );
+  const loadLinkPreview = useCallback((url: string) => bridge.getLinkPreview(url), [bridge]);
   const loadAvatar = useCallback((url: string) => bridge.getAvatar(url), [bridge]);
   const directory = useDirectory(
     bridge,
@@ -167,6 +168,7 @@ function Messenger({
             onLoadOlder={store.loadOlder}
             capabilities={store.capabilities}
             loadAttachment={loadAttachment}
+            loadLinkPreview={loadLinkPreview}
             onRetry={store.retryLoadMessages}
             onSendText={(text, replyTo) => store.sendText(store.selected!.id, text, replyTo)}
             onReact={store.setReaction}

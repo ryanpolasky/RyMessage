@@ -107,6 +107,15 @@ interface Attachment {
   url: string;
 }
 
+interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  siteName: string | null;
+  image: string | null;
+  icon: string | null;
+}
+
 interface Contact {
   id: string;
   displayName: string;
@@ -188,6 +197,10 @@ Marks the conversation read. Returns `204`.
 ### GET /v1/attachments/:id
 
 Streams the attachment bytes. Requires authentication. Attachments are immutable, so responses carry `Cache-Control: private, max-age=31536000, immutable`.
+
+### GET /v1/link-preview?url=<url>
+
+Fetches OpenGraph / oEmbed metadata for a public `http` or `https` URL and returns a `LinkPreview`. Responses carry `Cache-Control: private, max-age=86400`. Private and loopback addresses are rejected.
 
 ## WebSocket Events
 

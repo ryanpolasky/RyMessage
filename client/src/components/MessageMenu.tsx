@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Message, TapbackKind } from "../api/types";
-import { copyText } from "../desktop";
+import { copyText, openExternal } from "../desktop";
+import { extractLinks, soleLink } from "../utils/links";
 import { findVerificationCode, formatVerificationCode } from "../utils/verificationCode";
 import { TAPBACKS, TapbackIcon } from "./Tapback";
 
@@ -43,13 +44,20 @@ export function MessageMenu({ menu, onReact, onReply, onClose }: MessageMenuProp
 
   const items: { label: string; run: () => void }[] = [];
   if (canReply) items.push({ label: "Reply", run: () => onReply(message) });
+  const primaryLink = extractLinks(message.text)[0] ?? null;
+  if (primaryLink) {
+    items.push({ label: "Open Link", run: () => openExternal(primaryLink) });
+  }
   const code = message.isFromMe ? null : findVerificationCode(message.text);
   if (code) {
     items.push({ label: `Copy Code ${formatVerificationCode(code)}`, run: () => void copyText(code) });
   }
+  if (primaryLink && !soleLink(message.text)) {
+    items.push({ label: "Copy Link", run: () => void copyText(primaryLink) });
+  }
   if (message.text) {
     const text = message.text;
-    items.push({ label: "Copy", run: () => void copyText(text) });
+    items.push({ label: soleLink(text) ? "Copy Link" : "Copy", run: () => void copyText(text) });
   }
 
   const hasMenu = items.length > 0;

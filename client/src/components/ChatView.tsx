@@ -1,6 +1,6 @@
 import type { DragEvent } from "react";
 import { useRef, useState } from "react";
-import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
+import type { Attachment, Capabilities, Conversation, LinkPreview, Message, TapbackKind } from "../api/types";
 import { attachmentLabel } from "../utils/attachments";
 import { ConversationAvatar } from "./Avatar";
 import type { StagedFile } from "./Composer";
@@ -15,6 +15,7 @@ interface ChatViewProps {
   onLoadOlder: () => void;
   capabilities: Capabilities | null;
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
+  loadLinkPreview: (url: string) => Promise<LinkPreview | null>;
   onRetry: () => void;
   onSendText: (text: string, replyTo: string | null) => void;
   onSendFile: (file: File) => void;
@@ -29,6 +30,7 @@ export function ChatView({
   onLoadOlder,
   capabilities,
   loadAttachment,
+  loadLinkPreview,
   onRetry,
   onSendText,
   onSendFile,
@@ -111,6 +113,7 @@ export function ChatView({
           onLoadOlder={onLoadOlder}
           capabilities={capabilities}
           loadAttachment={loadAttachment}
+          loadLinkPreview={loadLinkPreview}
           onReact={onReact}
           onReply={(message) => setReply({ conversationId: conversation.id, message })}
         />

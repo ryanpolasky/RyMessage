@@ -2,6 +2,7 @@ import Vapor
 
 func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token: String) throws {
     let v1 = app.grouped("v1").grouped(BearerAuthMiddleware(token: token))
+    let linkPreviewer = LinkPreviewer()
 
     v1.get("capabilities") { _ in
         CapabilitiesResponse(capabilities: provider.capabilities)
@@ -111,6 +112,17 @@ func routes(_ app: Application, provider: MessagesProvider, hub: EventHub, token
         response.headers.contentDisposition = .init(.attachment, filename: attachment.fileName)
         response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=31536000, immutable")
         response.body = .init(buffer: data)
+        return response
+    }
+
+    v1.get("link-preview") { req -> Response in
+        guard let url = req.query[String.self, at: "url"], !url.isEmpty else {
+            throw ApiError.invalidRequest("A url query parameter is required.")
+        }
+        let preview = try await linkPreviewer.preview(for: url)
+        let response = Response(status: .ok)
+        try response.content.encode(preview)
+        response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=86400")
         return response
     }
 

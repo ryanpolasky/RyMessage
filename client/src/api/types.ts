@@ -45,6 +45,15 @@ export interface Attachment {
   url: string;
 }
 
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  siteName: string | null;
+  image: string | null;
+  icon: string | null;
+}
+
 export interface Message {
   id: string;
   conversationId: string;

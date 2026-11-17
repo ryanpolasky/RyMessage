@@ -3,7 +3,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Conversation, Message } from "./api/types";
+import type { Conversation, LinkPreview, Message } from "./api/types";
 
 export interface OverlayNotice {
   conversation: Conversation;
@@ -118,6 +118,25 @@ export function fitOverlayWindow(width: number, height: number): Promise<void> {
 // the overlay can never take focus, and the web clipboard API refuses unfocused pages
 export function copyText(text: string): Promise<void> {
   return isDesktop ? writeText(text) : navigator.clipboard.writeText(text);
+}
+
+export function openExternal(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+  if (isDesktop) {
+    void invoke("open_external", { url: parsed.href });
+  } else {
+    window.open(parsed.href, "_blank", "noopener,noreferrer");
+  }
+}
+
+export function fetchDesktopLinkPreview(url: string): Promise<LinkPreview> {
+  return invoke<LinkPreview>("fetch_link_preview", { url });
 }
 
 export function hideOnMinimize(): () => void {

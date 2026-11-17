@@ -4,6 +4,7 @@ import type { Attachment } from "../api/types";
 interface AttachmentViewProps {
   attachment: Attachment;
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
+  onEnlarge?: (attachment: Attachment) => void;
 }
 
 type Kind = "image" | "video" | "audio" | "file";
@@ -17,7 +18,7 @@ function isLocal(attachment: Attachment): boolean {
   return attachment.url.startsWith("blob:");
 }
 
-export function AttachmentView({ attachment, loadAttachment }: AttachmentViewProps) {
+export function AttachmentView({ attachment, loadAttachment, onEnlarge }: AttachmentViewProps) {
   const kind = kindOf(attachment);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -88,5 +89,12 @@ export function AttachmentView({ attachment, loadAttachment }: AttachmentViewPro
   if (kind === "audio") {
     return <audio className="bubble-audio" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
   }
-  return <img className="bubble-image" src={src} alt={attachment.fileName} />;
+  return (
+    <img
+      className={`bubble-image ${onEnlarge ? "clickable" : ""}`}
+      src={src}
+      alt={attachment.fileName}
+      onClick={onEnlarge ? () => onEnlarge(attachment) : undefined}
+    />
+  );
 }

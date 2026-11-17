@@ -1,3 +1,5 @@
+mod links;
+
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -160,22 +162,40 @@ fn sync_overlay_window(app: AppHandle, width: f64, height: f64) -> Result<(), St
   Ok(())
 }
 
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+  let parsed = links::parse_http_url(&url)?;
+  tauri_plugin_opener::open_url(parsed.as_str(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn fetch_link_preview(
+  state: State<'_, links::LinkPreviewState>,
+  url: String,
+) -> Result<links::LinkPreview, String> {
+  links::fetch_preview(&state, &url).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .manage(Mutex::new(OverlayState::default()))
+    .manage(links::LinkPreviewState::default())
     .invoke_handler(tauri::generate_handler![
       post_overlay_notice,
       overlay_ready,
       clear_overlay,
       update_overlay,
       sync_overlay_window,
+      open_external,
+      fetch_link_preview,
     ])
     .plugin(tauri_plugin_autostart::init(
       MacosLauncher::LaunchAgent,
       Some(vec![HIDDEN_ARG]),
     ))
     .plugin(tauri_plugin_clipboard_manager::init())
+    .plugin(tauri_plugin_opener::init())
     .setup(|app| {
       let open = MenuItem::with_id(app, "open", "Open RyMessage", true, None::<&str>)?;
       let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

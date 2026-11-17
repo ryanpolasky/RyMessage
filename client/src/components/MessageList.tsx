@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Attachment, Capabilities, Conversation, Message, TapbackKind } from "../api/types";
+import type { Attachment, Capabilities, Conversation, LinkPreview, Message, TapbackKind } from "../api/types";
+import { openExternal } from "../desktop";
 import { attachmentLabel, unsentNote } from "../utils/attachments";
+import { extractLinks, soleLink, tokenizeLinks } from "../utils/links";
 import { EASE_OUT_EXPO, prefersReducedMotion } from "../utils/motion";
 import { separatorParts } from "../utils/time";
 import { AttachmentView } from "./AttachmentView";
 import { Avatar } from "./Avatar";
+import { ImageLightbox } from "./ImageLightbox";
+import { LinkCard } from "./LinkCard";
 import type { MessageMenuState } from "./MessageMenu";
 import { MessageMenu } from "./MessageMenu";
 import { ReactionBadges } from "./Tapback";
@@ -14,6 +18,7 @@ interface MessageListProps {
   messages: Message[];
   capabilities: Capabilities | null;
   loadAttachment: (attachment: Attachment) => Promise<Blob>;
+  loadLinkPreview: (url: string) => Promise<LinkPreview | null>;
   onReact: (message: Message, kind: TapbackKind | null) => void;
   onReply: (message: Message) => void;
   historyState: "idle" | "loading" | "done";
@@ -76,6 +81,58 @@ function isVisualMedia(attachment: Attachment): boolean {
   return attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("video/");
 }
 
+function isImageAttachment(attachment: Attachment): boolean {
+  return attachment.mimeType.startsWith("image/");
+}
+
+type BubblePart =
+  | { kind: "media"; attachment: Attachment }
+  | { kind: "text" }
+  | { kind: "link"; url: string };
+
+const linkPreviewCache = new Map<string, { value: LinkPreview | null; expiresAt: number }>();
+
+function readCachedPreview(url: string): LinkPreview | null | undefined {
+  const entry = linkPreviewCache.get(url);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    linkPreviewCache.delete(url);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function hasRichMetadata(preview: LinkPreview | null | undefined): boolean {
+  return Boolean(preview && (preview.title || preview.image));
+}
+
+function BubbleText({ text }: { text: string }) {
+  const segments = useMemo(() => tokenizeLinks(text), [text]);
+  return (
+    <span className="bubble-text">
+      {segments.map((seg, idx) =>
+        seg.kind === "link" ? (
+          <a
+            key={idx}
+            className="bubble-link"
+            href={seg.url}
+            onClick={(e) => {
+              e.preventDefault();
+              if (window.getSelection()?.toString()) return;
+              e.stopPropagation();
+              openExternal(seg.url);
+            }}
+          >
+            {seg.text}
+          </a>
+        ) : (
+          seg.text
+        )
+      )}
+    </span>
+  );
+}
+
 function quoteText(message: Message): string {
   if (message.unsent) return unsentNote(message);
   if (message.text) return message.text;
@@ -89,6 +146,7 @@ export function MessageList({
   onLoadOlder,
   capabilities,
   loadAttachment,
+  loadLinkPreview,
   onReact,
   onReply,
 }: MessageListProps) {
@@ -97,8 +155,43 @@ export function MessageList({
   const pinnedToBottomRef = useRef(true);
   const [menu, setMenu] = useState<MessageMenuState | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const [enlarged, setEnlarged] = useState<{ conversationId: string; attachment: Attachment } | null>(null);
+  const enlargedAttachment = enlarged?.conversationId === conversation.id ? enlarged.attachment : null;
+  const openLightbox = useCallback(
+    (attachment: Attachment) => setEnlarged({ conversationId: conversation.id, attachment }),
+    [conversation.id]
+  );
+  const closeLightbox = useCallback(() => setEnlarged(null), []);
+  const [, bumpPreviewTick] = useState(0);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const [threadLines, setThreadLines] = useState<ThreadLine[]>([]);
+
+  const conversationImages = useMemo(
+    () => messages.flatMap((m) => (m.unsent ? [] : m.attachments.filter(isImageAttachment))),
+    [messages]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const urls = new Set<string>();
+    for (const m of messages) {
+      if (m.unsent || !m.text) continue;
+      const primary = extractLinks(m.text)[0];
+      if (primary && readCachedPreview(primary) === undefined) urls.add(primary);
+    }
+    for (const url of urls) {
+      loadLinkPreview(url).then((result) => {
+        linkPreviewCache.set(url, {
+          value: result,
+          expiresAt: result ? Number.POSITIVE_INFINITY : Date.now() + 30_000,
+        });
+        if (!cancelled) bumpPreviewTick((n) => n + 1);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, loadLinkPreview]);
 
   // consecutive replies from one sender to the same message share a single quote
   const runStart = useMemo(() => {
@@ -335,7 +428,20 @@ export function MessageList({
           const isNew = !initialIds.has(message.id) && Date.parse(message.sentAt) > initialNewest;
           const media = message.attachments.filter(isVisualMedia);
           const files = message.attachments.filter((a) => !isVisualMedia(a));
-          const parts: (Attachment | null)[] = [...media, ...(message.text || files.length ? [null] : [])];
+          const standaloneUrl = files.length === 0 ? soleLink(message.text) : null;
+          const primaryUrl = standaloneUrl ?? extractLinks(message.text)[0] ?? null;
+          const preview = primaryUrl ? readCachedPreview(primaryUrl) : undefined;
+          const parts: BubblePart[] = [
+            ...media.map((attachment): BubblePart => ({ kind: "media", attachment })),
+            ...(standaloneUrl
+              ? [{ kind: "link", url: standaloneUrl } as const]
+              : [
+                  ...(message.text || files.length ? ([{ kind: "text" }] as const) : []),
+                  ...(primaryUrl && hasRichMetadata(preview)
+                    ? ([{ kind: "link", url: primaryUrl }] as const)
+                    : []),
+                ]),
+          ];
           const original = message.replyTo != null ? byId.get(message.replyTo) : undefined;
           const quoteFromMe = original ? original.isFromMe : message.isFromMe;
           const inThread = message.replyTo != null;
@@ -385,9 +491,16 @@ export function MessageList({
               )}
               {parts.map((part, index) => {
                 const last = index === parts.length - 1;
+                const isCardOrMedia = part.kind === "media" || part.kind === "link";
                 return (
                   <div
-                    key={part ? `media-${index}` : "text"}
+                    key={
+                      part.kind === "media"
+                        ? `media-${index}`
+                        : part.kind === "link"
+                          ? `link-${part.url}`
+                          : "text"
+                    }
                     className={[
                       "bubble-row",
                       ...sideClasses,
@@ -408,20 +521,26 @@ export function MessageList({
                       className={[
                         "bubble",
                         isNew ? "bubble-new" : "",
-                        part ? "bubble-media" : "",
+                        isCardOrMedia ? "bubble-media" : "",
                         jumbo ? `bubble-emoji jumbo-${jumbo}` : "",
                         menu?.message.id === message.id ? "bubble-active" : "",
                       ].join(" ")}
                       onContextMenu={(e) => openMenu(e, message)}
                     >
-                      {part ? (
-                        <AttachmentView attachment={part} loadAttachment={loadAttachment} />
+                      {part.kind === "media" ? (
+                        <AttachmentView
+                          attachment={part.attachment}
+                          loadAttachment={loadAttachment}
+                          onEnlarge={isImageAttachment(part.attachment) ? openLightbox : undefined}
+                        />
+                      ) : part.kind === "link" ? (
+                        <LinkCard url={part.url} preview={preview} />
                       ) : (
                         <>
                           {files.map((att, fileIndex) => (
                             <AttachmentView key={fileIndex} attachment={att} loadAttachment={loadAttachment} />
                           ))}
-                          {message.text && <span className="bubble-text">{message.text}</span>}
+                          {message.text && <BubbleText text={message.text} />}
                         </>
                       )}
                       {last && <ReactionBadges reactions={message.reactions} />}
@@ -449,6 +568,15 @@ export function MessageList({
       </div>
       {menu && (
         <MessageMenu menu={menu} onReact={onReact} onReply={onReply} onClose={closeMenu} />
+      )}
+      {enlargedAttachment && (
+        <ImageLightbox
+          images={conversationImages}
+          current={enlargedAttachment}
+          loadAttachment={loadAttachment}
+          onSelect={openLightbox}
+          onClose={closeLightbox}
+        />
       )}
     </div>
   );

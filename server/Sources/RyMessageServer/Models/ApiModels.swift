@@ -66,6 +66,15 @@ struct Attachment: Content {
     var url: String
 }
 
+struct LinkPreview: Content {
+    var url: String
+    var title: String?
+    var description: String?
+    var siteName: String?
+    var image: String?
+    var icon: String?
+}
+
 struct Message: Content {
     var id: String
     var conversationId: String

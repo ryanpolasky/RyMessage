@@ -1,3 +1,4 @@
+import { fetchDesktopLinkPreview, isDesktop } from "../desktop";
 import type { ConnectionStatus, RyMessageBridge } from "./bridge";
 import type {
   Attachment,
@@ -5,6 +6,7 @@ import type {
   Capabilities,
   ContactsResponse,
   Conversation,
+  LinkPreview,
   Message,
   TapbackKind,
 } from "./types";
@@ -31,6 +33,7 @@ export class RemoteBridge implements RyMessageBridge {
   private lastTickAt = 0;
   private pingSentAt = 0;
   private pongSupported = false;
+  private linkPreviews = new Map<string, Promise<LinkPreview | null>>();
 
   constructor(
     private baseUrl: string,
@@ -94,6 +97,24 @@ export class RemoteBridge implements RyMessageBridge {
 
   getAttachment(attachment: Attachment): Promise<Blob> {
     return this.fetchBlob(attachment.url);
+  }
+
+  getLinkPreview(url: string): Promise<LinkPreview | null> {
+    const existing = this.linkPreviews.get(url);
+    if (existing) return existing;
+    const pending = this.loadLinkPreview(url);
+    this.linkPreviews.set(url, pending);
+    return pending;
+  }
+
+  private async loadLinkPreview(url: string): Promise<LinkPreview | null> {
+    const params = new URLSearchParams({ url });
+    try {
+      return await this.request<LinkPreview>("GET", `/v1/link-preview?${params}`);
+    } catch {
+      if (!isDesktop) return null;
+      return fetchDesktopLinkPreview(url).catch(() => null);
+    }
   }
 
   getContacts(version: string | null): Promise<ContactsResponse> {

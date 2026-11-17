@@ -1,3 +1,4 @@
+import { fetchDesktopLinkPreview, isDesktop } from "../desktop";
 import { normalizeHandle } from "../utils/handles";
 import type { ConnectionStatus, RyMessageBridge } from "./bridge";
 import type {
@@ -7,6 +8,7 @@ import type {
   Contact,
   ContactsResponse,
   Conversation,
+  LinkPreview,
   Message,
   Participant,
   Service,
@@ -119,7 +121,7 @@ const history: Record<string, Message[]> = {
     msg("c-alex", null, "unreal ending lol", 1495),
     msg("c-alex", alex, "we should go to one this season", 1490),
     msg("c-alex", null, "down, check the schedule", 1480),
-    msg("c-alex", alex, "tickets for the 14th are like $60", 55),
+    msg("c-alex", alex, "tickets for the 14th are like $60 https://seatgeek.com/celtics-tickets", 55),
     msg("c-alex", null, "say less, grab two", 50, false),
   ],
   "c-group": [
@@ -133,6 +135,7 @@ const history: Record<string, Message[]> = {
   ],
   "c-dylan": [
     msg("c-dylan", dylan, "PR is up when you get a sec", 2800),
+    msg("c-dylan", dylan, "https://github.com/ryanpolasky/RyMessage/pull/42", 2799),
     msg("c-dylan", null, "looking now", 2790),
     msg("c-dylan", null, "left two comments, otherwise lgtm", 2760),
     msg("c-dylan", dylan, "fixed, merging", 2700),
@@ -299,9 +302,32 @@ function serviceOf(conversationId: string): Service {
 
 let replyIndex = 0;
 
+const ARENA_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="315" viewBox="0 0 600 315"><defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b5d3b"/><stop offset="1" stop-color="#062c1c"/></linearGradient></defs><rect width="600" height="315" fill="url(#a)"/><rect x="110" y="58" width="380" height="200" rx="18" fill="none" stroke="#ffffff" stroke-opacity=".35" stroke-width="4"/><rect x="155" y="88" width="290" height="140" rx="8" fill="#d9a86c"/><circle cx="300" cy="158" r="28" fill="#0b5d3b" stroke="#ffffff" stroke-width="3"/><line x1="300" y1="88" x2="300" y2="228" stroke="#ffffff" stroke-width="3"/></svg>`;
+const PR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="315" viewBox="0 0 600 315"><rect width="600" height="315" fill="#0d1117"/><rect x="36" y="36" width="528" height="243" rx="16" fill="#161b22" stroke="#30363d" stroke-width="2"/><circle cx="80" cy="84" r="14" fill="#238636"/><rect x="108" y="74" width="260" height="20" rx="6" fill="#e6edf3"/><rect x="108" y="110" width="180" height="12" rx="4" fill="#8b949e"/><rect x="66" y="156" width="468" height="14" rx="4" fill="#30363d"/><rect x="66" y="182" width="380" height="14" rx="4" fill="#30363d"/><rect x="66" y="224" width="90" height="24" rx="12" fill="#238636"/></svg>`;
+
+const DEMO_PREVIEWS: Record<string, LinkPreview> = {
+  "https://seatgeek.com/celtics-tickets": {
+    url: "https://seatgeek.com/celtics-tickets",
+    title: "Boston Celtics Tickets - TD Garden",
+    description: "Find verified lower bowl and balcony seats for upcoming home games.",
+    siteName: "SeatGeek",
+    image: `data:image/svg+xml,${encodeURIComponent(ARENA_SVG)}`,
+    icon: null,
+  },
+  "https://github.com/ryanpolasky/RyMessage/pull/42": {
+    url: "https://github.com/ryanpolasky/RyMessage/pull/42",
+    title: "Add rich link embeds and image lightbox #42",
+    description: "ryanpolasky/RyMessage",
+    siteName: "GitHub",
+    image: `data:image/svg+xml,${encodeURIComponent(PR_SVG)}`,
+    icon: null,
+  },
+};
+
 export class MockBridge implements RyMessageBridge {
   private listeners = new Set<(event: BridgeEvent) => void>();
   private ambientTimer: number | null = null;
+  private linkPreviews = new Map<string, Promise<LinkPreview | null>>();
 
   constructor(private ambientDelayMs: [number, number] = [20_000, 40_000]) {}
 
@@ -456,6 +482,19 @@ export class MockBridge implements RyMessageBridge {
   async getAttachment(attachment: Attachment): Promise<Blob> {
     const res = await fetch(attachment.url);
     return res.blob();
+  }
+
+  getLinkPreview(url: string): Promise<LinkPreview | null> {
+    const existing = this.linkPreviews.get(url);
+    if (existing) return existing;
+    const pending = (async () => {
+      await delay(60);
+      if (DEMO_PREVIEWS[url]) return DEMO_PREVIEWS[url];
+      if (!isDesktop) return null;
+      return fetchDesktopLinkPreview(url).catch(() => null);
+    })();
+    this.linkPreviews.set(url, pending);
+    return pending;
   }
 
   subscribe(listener: (event: BridgeEvent) => void): () => void {

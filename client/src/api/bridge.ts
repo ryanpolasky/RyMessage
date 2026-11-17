@@ -4,6 +4,7 @@ import type {
   Capabilities,
   ContactsResponse,
   Conversation,
+  LinkPreview,
   Message,
   TapbackKind,
 } from "./types";
@@ -25,6 +26,7 @@ export interface RyMessageBridge {
   sendAttachment(conversationId: string, clientId: string, file: File): Promise<Message>;
   markRead(conversationId: string): Promise<void>;
   getAttachment(attachment: Attachment): Promise<Blob>;
+  getLinkPreview(url: string): Promise<LinkPreview | null>;
   getContacts(version: string | null): Promise<ContactsResponse>;
   getAvatar(url: string): Promise<Blob>;
   subscribe(listener: (event: BridgeEvent) => void): () => void;
